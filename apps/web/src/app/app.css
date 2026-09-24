@@ -1,0 +1,26 @@
+:host { display: block; }
+main { max-width: 680px; margin: 12vh auto; padding: 0 24px; }
+.eyebrow { color: #47624a; font-size: .78rem; font-weight: 700; letter-spacing: .13em; text-transform: uppercase; }
+h1 { font-size: clamp(2.1rem, 6vw, 3.4rem); line-height: 1.08; letter-spacing: -.045em; margin: 20px 0; max-width: 560px; }
+.intro { color: #60675c; line-height: 1.6; margin-bottom: 36px; }
+section { padding: 12px 28px 28px; background: #fffefa; border: 1px solid #dedfd5; border-radius: 16px; }
+dl { margin: 0 0 24px; }
+dl > div { display: flex; justify-content: space-between; align-items: baseline; gap: 20px; padding: 19px 0; border-bottom: 1px solid #ecece3; }
+dt { font-weight: 600; }
+dd { margin: 0; text-align: right; color: #666b62; font-size: .92rem; overflow-wrap: anywhere; }
+.connected { color: #276140; }
+.actions { display: flex; gap: 12px; flex-wrap: wrap; }
+button { background: #31583b; color: white; border: 1px solid #31583b; border-radius: 8px; padding: 11px 17px; font: inherit; font-size: .9rem; cursor: pointer; }
+button:hover { filter: brightness(.93); }
+button:focus-visible { outline: 3px solid #92b394; outline-offset: 3px; }
+button:disabled { opacity: .55; cursor: wait; }
+.secondary { color: #31583b; background: transparent; border-color: #c9d0c4; }
+.error { color: #963b25; line-height: 1.5; }
+.hint, .footnote { font-size: .83rem; color: #697061; line-height: 1.5; }
+.footnote { margin-top: 24px; }
+@media (max-width: 480px) {
+  main { margin: 8vh auto; padding: 0 18px; }
+  section { padding: 8px 20px 24px; }
+  dl > div { flex-direction: column; gap: 8px; }
+  dd { text-align: left; }
+}

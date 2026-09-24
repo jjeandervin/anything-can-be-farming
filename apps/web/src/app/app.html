@@ -1,0 +1,36 @@
+<main>
+  <p class="eyebrow">A little groundwork</p>
+  <h1>Anything Can Be Farming</h1>
+  <p class="intro">A place for things to grow. First, let’s get connected.</p>
+
+  <section aria-label="Development environment status">
+    <dl aria-live="polite">
+      <div><dt>API</dt><dd [class.connected]="api() === 'Connected'">{{ api() }}</dd></div>
+      <div><dt>Database</dt><dd [class.connected]="database() === 'Connected'">{{ database() }}</dd></div>
+      <div>
+        <dt>Authentication</dt>
+        <dd [class.connected]="auth.authenticated()">
+          @if (!auth.ready()) { Checking… }
+          @else if (auth.authenticated()) { Signed in as {{ auth.name() }} }
+          @else { Not signed in }
+        </dd>
+      </div>
+      <div><dt>Protected API</dt><dd>{{ protectedApi() }}</dd></div>
+    </dl>
+    @if (auth.error()) { <p class="error" role="alert">{{ auth.error() }}</p> }
+    @if (api() === 'Unavailable') {
+      <p class="hint">Check that the API is running and its local HTTPS certificate is trusted.</p>
+    }
+    <div class="actions">
+      @if (auth.authenticated()) {
+        <button (click)="auth.signOut()">Sign out</button>
+      } @else {
+        <button (click)="auth.signIn()" [disabled]="!auth.ready()">Sign in</button>
+      }
+      <button class="secondary" (click)="refresh()" [disabled]="checking()">
+        {{ checking() ? 'Checking…' : 'Check connections' }}
+      </button>
+    </div>
+  </section>
+  <p class="footnote">Just the foundations for now. More growing room to come.</p>
+</main>

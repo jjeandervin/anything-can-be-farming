@@ -1,0 +1,5 @@
+{
+  "keycloakIssuer": "https://auth.jeandervin.com/realms/hooviepack",
+  "keycloakClientId": "acbf-web",
+  "apiBaseUrl": "https://localhost:7243"
+}

@@ -1,0 +1,33 @@
+{
+  "name": "acbf-web",
+  "version": "0.0.0",
+  "scripts": {
+    "ng": "ng",
+    "start": "ng serve",
+    "build": "ng build",
+    "watch": "ng build --watch --configuration development",
+    "prestart": "node scripts/config.mjs",
+    "prebuild": "node scripts/config.mjs",
+    "test": "ng test"
+  },
+  "private": true,
+  "packageManager": "npm@11.20.0",
+  "dependencies": {
+    "@angular/common": "^22.2.0",
+    "@angular/compiler": "^22.2.0",
+    "@angular/core": "^22.2.0",
+    "@angular/platform-browser": "^22.2.0",
+    "keycloak-js": "26.2.4",
+    "rxjs": "~7.8.0",
+    "tslib": "^2.3.0"
+  },
+  "devDependencies": {
+    "@angular/build": "^22.2.0",
+    "@angular/cli": "^22.2.0",
+    "@angular/compiler-cli": "^22.2.0",
+    "jsdom": "^28.1.0",
+    "prettier": "^3.8.1",
+    "typescript": "~6.0.2",
+    "vitest": "^4.1.11"
+  }
+}

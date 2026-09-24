@@ -38,6 +38,21 @@ ScaffoldingReadMe.txt
 
 # dotenv environment variables file
 .env
+.env.*
+!.env.example
+**/appsettings.Local.json
+
+# IDE and frontend output
+.vs/
+.idea/
+*.user
+*.suo
+**/node_modules/
+**/.angular/
+**/dist/
+**/coverage/
+apps/web/public/config.json
+**/TestResults/
 
 # Others
 ~$*
