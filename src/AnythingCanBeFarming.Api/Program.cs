@@ -1,5 +1,6 @@
 using AnythingCanBeFarming.Data;
 using AnythingCanBeFarming.Api.Health;
+using AnythingCanBeFarming.Api.PlantNet;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 
@@ -12,6 +13,7 @@ var audience = builder.Configuration["Authentication:Audience"]
     ?? throw new InvalidOperationException("Configure Authentication:Audience.");
 
 builder.Services.AddControllers();
+builder.Services.AddPlantNet(builder.Configuration);
 builder.Services.AddDbContext<AcbfDbContext>(options => options.UseNpgsql(connectionString));
 builder.Services.AddHealthChecks().AddCheck<PostgresHealthCheck>("postgres", tags: ["database"]);
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(options =>

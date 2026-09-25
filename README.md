@@ -84,6 +84,7 @@ The API independently supports:
 | `Authentication:Authority` | Exact Keycloak realm issuer; HTTPS metadata is required |
 | `Authentication:Audience` | Expected access-token audience |
 | `Cors:AllowedOrigins` | Array of allowed development browser origins |
+| `PlantNet:ApiKey` | Private Pl@ntNet API key used by the server-side `PlantNetClient` |
 
 For an intentional standalone API launch, set `ConnectionStrings:acbf` with **Manage User Secrets** on the API project. Example shape, using your own credentials and database port:
 
@@ -100,6 +101,33 @@ Environment-variable equivalents include `ConnectionStrings__acbf`, `Authenticat
 Frontend public runtime settings are generated into the ignored `apps/web/public/config.json` at container startup. `apps/web/config.example.json` documents the shape and provides defaults. AppHost supplies `ACBF_KEYCLOAK_ISSUER`, `ACBF_KEYCLOAK_CLIENT_ID`, and `ACBF_API_BASE_URL`. The app fetches this configuration before bootstrapping; nothing in it is secret. Restart the web resource after configuration changes.
 
 If you change the API's HTTPS port in its `Properties/launchSettings.json`, update `Web:ApiBaseUrl` as well. If you change the frontend origin, update Keycloak's redirects, post-logout redirects, and web origin to match. `Web:Origin` assumes local HTTP development; the container serves HTTP on internal port 4200.
+
+## Pl@ntNet API client
+
+The API registers `AnythingCanBeFarming.Api.PlantNet.PlantNetClient` as a typed HTTP client for the supplied My Pl@ntNet v2.2.2 specification. Inject it into server-side services to access plant, disease, and variety identification, embeddings, taxonomy lists, health, quotas, and subscription details. It sends the configured key as the `api-key` query parameter. HTTP client request logging is disabled for this client because the query contains the key.
+
+`PlantNet:ApiKey` is blank in the API's `appsettings.json`. Set it using API project user secrets (also used when the API is launched through Aspire):
+
+```sh
+dotnet user-secrets set "PlantNet:ApiKey" "<your-api-key>" --project src/AnythingCanBeFarming.Api
+```
+
+Alternatively, set `PlantNet__ApiKey` in the API process environment. The app can start without a key; authenticated Pl@ntNet calls fail with a configuration error until it is set. The public health call needs no key.
+
+For example, with an injected `PlantNetClient plantNet`:
+
+```csharp
+var image = new PlantNetImageUpload(
+    await File.ReadAllBytesAsync("leaf.jpg", cancellationToken), "leaf.jpg", "image/jpeg");
+var result = await plantNet.IdentifyAsync([image], options: new()
+{
+    Organs = ["leaf"],
+    Language = "en",
+    NumberOfResults = 5
+}, cancellationToken: cancellationToken);
+```
+
+Identification accepts one to five JPEG/PNG images of the same plant. Omit organs for automatic detection, or supply one per image. POST requests are subject to the API's 50 MiB limit. The deprecated URL-based GET operation is available as `IdentifyUrlsAsync`. Species pagination accepts strings so setting both `Page` and `PageSize` to `""` disables pagination as specified by the API. Non-success responses throw `HttpRequestException` with the HTTP status; calls accept cancellation tokens and do not retry quota-consuming requests automatically.
 
 ## Keycloak setup — manual only
 
