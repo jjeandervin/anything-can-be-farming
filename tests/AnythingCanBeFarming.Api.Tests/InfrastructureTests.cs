@@ -5,7 +5,7 @@ using System.Net.Http.Json;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text.Json;
-using AnythingCanBeFarming.Api.Data;
+using AnythingCanBeFarming.Data;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -94,12 +94,13 @@ public sealed class InfrastructureTests
     }
 
     [Fact]
-    public void Database_model_contains_no_entities()
+    public void Database_model_contains_only_WFO_reference_entities()
     {
         using var factory = new ApiFactory();
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AcbfDbContext>();
-        Assert.Empty(db.Model.GetEntityTypes());
+        Assert.Equal(new[] { typeof(WfoDeduplicatedId), typeof(WfoDeprecatedName), typeof(WfoImport), typeof(WfoIpniMapping), typeof(WfoTaxon) },
+            db.Model.GetEntityTypes().Select(x => x.ClrType).OrderBy(x => x.Name));
     }
 
     [Fact]
@@ -112,7 +113,7 @@ public sealed class InfrastructureTests
         Assert.Equal("{\"database\":\"unavailable\"}", await response.Content.ReadAsStringAsync());
     }
 
-    private sealed class ApiFactory(bool healthy = true, bool useRealHealthCheck = false)
+    internal sealed class ApiFactory(bool healthy = true, bool useRealHealthCheck = false, string? connectionString = null)
         : WebApplicationFactory<Program>
     {
         private const string Issuer = "https://identity.example/realms/acbf-test";
@@ -123,7 +124,7 @@ public sealed class InfrastructureTests
             builder.UseEnvironment("Development");
             foreach (var setting in new Dictionary<string, string?>
             {
-                ["ConnectionStrings:acbf"] = "Host=127.0.0.1;Port=1;Database=acbf;Username=unused;Timeout=1",
+                ["ConnectionStrings:acbf"] = connectionString ?? "Host=127.0.0.1;Port=1;Database=acbf;Username=unused;Timeout=1",
                 ["Authentication:Authority"] = Issuer,
                 ["Authentication:Audience"] = "acbf-api",
                 ["Cors:AllowedOrigins:0"] = "http://localhost:4200"

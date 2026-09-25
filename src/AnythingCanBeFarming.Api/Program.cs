@@ -1,4 +1,4 @@
-using AnythingCanBeFarming.Api.Data;
+using AnythingCanBeFarming.Data;
 using AnythingCanBeFarming.Api.Health;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;

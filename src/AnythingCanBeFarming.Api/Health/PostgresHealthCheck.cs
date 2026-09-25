@@ -1,4 +1,4 @@
-using AnythingCanBeFarming.Api.Data;
+using AnythingCanBeFarming.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 

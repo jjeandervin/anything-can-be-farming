@@ -1,6 +1,6 @@
 # Anything Can Be Farming
 
-ACBF's initial development foundation: Angular, an ASP.NET Core controller API, PostgreSQL, and authentication against an existing Keycloak realm. Aspire orchestrates local development only. There are no application entities, tables, migrations, or domain features yet.
+ACBF uses Angular, an ASP.NET Core controller API, PostgreSQL, and authentication against an existing Keycloak realm. Aspire orchestrates local development only. The first reference dataset is the World Flora Online (WFO) Taxonomic Backbone. Plant, yard, and garden domain features are not implemented.
 
 ## Prerequisites
 
@@ -168,7 +168,7 @@ dotnet build AnythingCanBeFarming.sln
 dotnet test tests/AnythingCanBeFarming.Api.Tests
 ```
 
-API tests exercise the actual JWT bearer handler with locally signed test tokens, including rejection of bad issuer, audience, signature, expiry, and malformed tokens. They also check CORS, anonymous/protected endpoints, health failure responses, and the empty EF model. The remote Keycloak installation is not used or modified by tests. Frontend tests cover session restoration settings, token renewal, sign-in/out, and restricting token attachment to the API.
+API tests exercise the actual JWT bearer handler with locally signed test tokens, including rejection of bad issuer, audience, signature, expiry, and malformed tokens. They also check CORS, anonymous/protected endpoints, health failure responses, and the reference-only EF model. WFO tests cover TSV parsing and optionally real PostgreSQL imports and queries (see below). The remote Keycloak installation is not used or modified by tests. Frontend tests cover session restoration settings, token renewal, sign-in/out, and restricting token attachment to the API.
 
 With AppHost running:
 
@@ -189,7 +189,81 @@ Complete the interactive checks:
 5. Edit the subtitle in `apps/web/src/app/app.html`; confirm an Angular rebuild and browser update without restarting the AppHost.
 6. Hit the C# breakpoint described above while debugging the AppHost.
 
-`AcbfDbContext` has no entities or DbSets. Startup and health checks do not call `EnsureCreated`, `Migrate`, or create migration metadata. PostgreSQL's own system catalogs are expected; the `acbf` public schema stays empty.
+`AcbfDbContext` is shared by the API and importer through `AnythingCanBeFarming.Data`. It contains only WFO reference entities. Startup and health checks do not call `EnsureCreated`, `Migrate`, or import reference data. Apply migrations explicitly before using reference endpoints; an empty migrated database returns empty search results, zero statistics, and 404 for unknown taxa.
+
+## WFO reference data
+
+Stage the original WFO files anywhere under `data/imports/wfo/`. All contents except `.gitkeep` are Git-ignored, including release metadata and generated diagnostics. The importer recursively discovers tab-delimited files with a WFO header, including the supplied `downloaded files/backbone/classification.csv`. If there is more than one snapshot, select one using `--file`. It never modifies the source.
+
+The importer uses the API's `ConnectionStrings:acbf`: API appsettings, environment-specific appsettings, the API's development user secrets, then environment variables. Its environment defaults to Development; set `DOTNET_ENVIRONMENT` (or `ASPNETCORE_ENVIRONMENT`) to change that. It does not need Keycloak configuration or tokens. Aspire injects the database connection into the API process only; a separately launched importer needs the loopback connection shown in the Aspire dashboard configured through API user secrets or `ConnectionStrings__acbf`.
+
+With that connection configured, run from the repository:
+
+```sh
+dotnet tool restore
+dotnet ef database update --project src/AnythingCanBeFarming.Data --startup-project src/AnythingCanBeFarming.Api
+dotnet run --project src/AnythingCanBeFarming.DataImport -- wfo
+```
+
+Migration and import are separate operations. The migration creates `reference.wfo_import`, `reference.wfo_taxon`, indexes, and foreign keys. No data is imported during API startup or migration.
+
+Optional import arguments:
+
+```sh
+dotnet run --project src/AnythingCanBeFarming.DataImport -- wfo --file "data/imports/wfo/downloaded files/backbone/classification.csv"
+dotnet run --project src/AnythingCanBeFarming.DataImport -- wfo --version 2026-06 --force
+```
+
+Version precedence is an explicit `--version` override, adjacent `fileInfo.json`'s `version`, then a YYYY-MM or YYYY_MM release in the filename. Unknown versions remain null. A SHA-256 match to any successful import is skipped unless `--force` is supplied; forcing an older snapshot deliberately makes that snapshot current again.
+
+CsvHelper parses the exact 29-column TSV format, including quoted tabs, escaped quotes, multiline fields, and Unicode. Records stream through Npgsql binary COPY into a temporary staging table; memory does not grow with dataset size. Fields allow up to 16 MiB to prevent an unterminated quote from consuming the entire file. Optional empty strings become null; identifiers, names, authorship, statuses, and other nonempty strings are not trimmed, normalized, or reconstructed. The supplied date-only values use PostgreSQL `date`.
+
+Missing required IDs/names, malformed records, NULs, and duplicate TaxonIds fail publication and return a nonzero exit code. All conflicting duplicate rows are reported. No rejected snapshot marks existing taxa non-current. Invalid dates become null with a row/field warning. Invalid UTF-8 in text fields is decoded with U+FFFD and reported; the unchanged source retains the original bytes. A replacement character in an identifier rejects its record. Warning messages also flag U+FFFD already present in the source.
+
+Imports serialize with a PostgreSQL advisory lock. Publication, relationship updates, and successful metadata commit in one transaction. Existing TaxonIds retain their internal bigint IDs, new taxa are inserted, and absent taxa become non-current without deletion. Raw relationship identifiers remain intact. Resolved foreign keys refer to the current snapshot only; missing targets and non-current records have null resolved links. Parent, accepted-name, and original-name links use explicit WFO identifiers, without name-string inference or assumptions about statuses.
+
+Failed/cancelled imports roll back snapshot changes and record failed metadata. If the process is killed or loses its database connection before failure metadata can be saved, the next import identifies the abandoned Running entry after acquiring the exclusive import lock. This is a current reference snapshot model, not complete historical row versioning; `ImportId` on an absent taxon identifies the last snapshot containing it.
+
+The console prints counts for records read/imported/rejected, duplicate and missing IDs/names, unique families/genera, all four status/rank/group distributions, and resolved/unresolved relationships. The same summary is stored in `wfo_import.ValidationJson`. Detailed diagnostics stream to an adjacent `wfo-import-*.jsonl` file; `--diagnostics <new-path>` chooses another location. Rows are physical source line numbers, with the header at line 1. Remarks are never dumped into diagnostics. Warnings count individual field/reference issues, not necessarily distinct taxa.
+
+Reference endpoints use the existing JWT bearer authentication:
+
+| Endpoint | Behavior |
+| --- | --- |
+| `GET /api/reference/plants/search?q=acer&pageSize=20` | Case-insensitive literal substring search across scientific name, genus, and specific epithet; current records only; stable name/ID ordering |
+| `GET /api/reference/plants/{taxonId}` | Resolves explicit replacement chains and returns `{ requestedWfoId, resolvedWfoId, wasRedirected, taxon }`; 404 if no current target exists |
+| `GET /api/reference/plants/by-ipni/{ipniId}` | Normalizes a bare or IPNI LSID identifier, resolves its WFO mappings, and returns the same resolution envelope; 409 for multiple current targets |
+| `GET /api/reference/plants/stats` | Total retained and current counts, current families/genera and distributions, relationship counts, and latest successful backbone import |
+
+Search defaults to 20 results. `ReferencePlants:DefaultPageSize` and `ReferencePlants:MaxPageSize` configure limits, with a hard ceiling of 100. Invalid queries or page sizes return 400. Search omits large remarks and publication fields. Detail fields such as `taxonRemarks` remain untrusted source text; clients must not render them as trusted HTML. Statistics use one consistent database snapshot and report current-record distributions, including null values.
+
+To enable the PostgreSQL integration test, set `ACBF_TEST_POSTGRES` to a test server connection whose user can create databases, then run `dotnet test tests/AnythingCanBeFarming.Api.Tests`. The test creates and removes its own uniquely named database, exercising migrations, bulk loading, repeat/forced imports, failure rollback, future snapshots, and authenticated endpoints. Without that setting it is reported as skipped. To additionally run a read-only API smoke test against an already imported WFO snapshot, set `ACBF_TEST_WFO_SNAPSHOT` to that database connection. Neither test contacts Keycloak.
+
+See [the first full-snapshot validation](docs/wfo-validation.md) for observed counts and source-quality findings.
+
+## WFO supplemental identifiers
+
+Apply the migrations above, then import just the supplemental CSV files without reimporting the backbone:
+
+```sh
+dotnet run --project src/AnythingCanBeFarming.DataImport -- wfo supplemental
+```
+
+Use `wfo all` to run backbone, IPNI, deprecated names, and deduplicated IDs in order. `wfo` and `wfo backbone` retain the backbone-only command. `--directory "data/imports/wfo/downloaded files"` selects a package; discovery uses stable `_ipni_to_wfo.csv`, `_deprecated_names_lookup.csv`, and `_deduplicated_ids_lookup.csv` suffixes (or the unprefixed filenames), ignoring numeric prefixes. Missing or ambiguous files fail before imports start. `--file` selects only the backbone; `--force` and `--version` apply to all selected imports.
+
+Each supplemental file has its own `reference.wfo_import` entry with dataset kind, filename, SHA-256, release, timestamps, row counts, warnings, status, and validation JSON. Existing history defaults to `Backbone`, so taxonomy statistics continue to report the backbone release. Release metadata comes from `--version`, adjacent metadata/filename, or the same package's `backbone/fileInfo.json`; unknown releases remain null. These files' local metadata says `2026-09`; the importer does not infer a different release from modification timestamps.
+
+**Known source quirk:** the staged `050_deduplicated_ids_lookup.csv` has the five-field header `wfo_id,name_canonical,authors_string,rank,nomenclatural_status` but every inspected data row has six fields. The missing second header is interpreted as `replacement_wfo_id`. Data order is **deprecated WFO ID, replacement WFO ID, canonical name, authors, rank, nomenclatural status**. For example, `wfo-4000048768,wfo-4000048766,?,,genus,deprecated` maps the first ID to the second. The importer recognizes this exact header/layout, emits a persisted warning, and requires six fields and valid WFO identifiers in positions 1 and 2. It also accepts an explicit six-column header with `replacement_wfo_id` second. Other headers, shifted columns, malformed CSV, invalid UTF-8, empty required identifiers, NULs, and duplicate natural keys reject publication. The downloaded file is never rewritten.
+
+CsvHelper streams quoted, comma-containing, multiline, and Unicode fields through binary COPY staging. Each file publishes atomically. Supplemental records are upserted by their natural keys; prior historical mappings absent from a later file are retained. Conflicting mappings for an existing deprecated ID are updated by the new import. Failed files leave previously committed data intact; earlier successful files in a multi-file run stay committed and are skipped on retry. Identical successful hashes are skipped unless forced. These imports never update `wfo_taxon` or create application-domain tables.
+
+`IpniId` preserves the source exactly; indexed `NormalizedIpniId` strips the `urn:lsid:ipni.org:names:` prefix and surrounding whitespace for matching. Multiple WFO mappings per IPNI ID remain valid. Optional taxon foreign keys resolve raw IDs directly against the current backbone, leaving absent IDs null. Backbone refreshes also refresh these supplemental links. Validation counts describe the complete stored supplemental tables at import time; IPNI WFO counts are distinct IDs, while deduplication replacement counts are mapping rows with directly resolved targets.
+
+Canonical resolution follows prescribed replacement edges before returning a current backbone record, including when the old ID remains in that backbone. It allows up to 64 replacements, detects visited IDs/self references, and never follows taxonomy synonyms implicitly. Invalid graphs reject the deduplication import; the API also returns 409 if an invalid graph is introduced outside the importer. The report counts mappings reaching cycles (including upstream mappings), rather than claiming a count of distinct cycle components. A deprecated-name record alone does not imply a replacement. Missing/non-current terminal targets return 404. Multiple IPNI mappings converging on one current taxon return that taxon; distinct current targets return 409 with candidate WFO IDs.
+
+The detail endpoint now returns the resolution envelope shown above instead of the previous flat response. The nested taxon retains source fields and one-level related taxa, but omits import IDs and internal relationship IDs. Search continues to query current backbone taxa only. Supplemental records are not added as separate search results.
+
+See [supplemental validation](docs/wfo-supplemental-validation.md) for the staged-file counts and checks.
 
 ## Stop, restart, and reset
 
@@ -214,4 +288,4 @@ Next F5 initializes an empty `acbf` database. Do not remove the database volume 
 - **Port already in use:** check for a previous ACBF AppHost/container before launching another. Adjust the documented settings together if different ports are needed.
 - **Breakpoints do not bind:** launch AppHost with the IDE's Aspire integration, check the Debug build configuration, and confirm the API project process is attached. A plain CLI run has no debugger attached.
 
-Production deployment, CI/CD, storage integrations, application schema, and domain UI are deliberately left for later phases.
+Production deployment, CI/CD, storage integrations, plant/yard application schema, and domain UI are deliberately left for later phases.

@@ -70,3 +70,7 @@ CodeCoverage/
 *.VisualState.xml
 TestResult.xml
 nunit-*.xml
+
+# Locally staged taxonomy snapshots and import diagnostics
+/data/imports/wfo/**
+!/data/imports/wfo/.gitkeep

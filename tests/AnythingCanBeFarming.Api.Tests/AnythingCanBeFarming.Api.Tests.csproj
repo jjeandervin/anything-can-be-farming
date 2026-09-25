@@ -20,4 +20,8 @@
     <Using Include="Xunit" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\AnythingCanBeFarming.DataImport\AnythingCanBeFarming.DataImport.csproj" />
+  </ItemGroup>
+
 </Project>
