@@ -4,6 +4,7 @@ using AnythingCanBeFarming.Data;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 
 namespace AnythingCanBeFarming.Api.Controllers;
 
@@ -16,25 +17,109 @@ public sealed class ReferencePlantsController(AcbfDbContext db, IConfiguration c
     public async Task<IActionResult> Search([FromQuery] string? q, [FromQuery] int? pageSize, CancellationToken cancellationToken)
     {
         q = q?.Trim();
-        if (string.IsNullOrEmpty(q) || q.Length > 200)
-            return BadRequest(new { error = "q must contain 1 to 200 characters." });
+        if (string.IsNullOrEmpty(q) || q.Length < 2 || q.Length > 200)
+            return BadRequest(new { error = "q must contain 2 to 200 characters." });
         var maximum = Math.Clamp(configuration.GetValue("ReferencePlants:MaxPageSize", 100), 1, 100);
         var size = pageSize ?? Math.Clamp(configuration.GetValue("ReferencePlants:DefaultPageSize", 20), 1, maximum);
         if (size < 1 || size > maximum)
             return BadRequest(new { error = $"pageSize must be between 1 and {maximum}." });
-        // Treat SQL pattern characters in user input as literal text.
-        var pattern = "%" + q.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_") + "%";
-        var results = await db.WfoTaxa.AsNoTracking().Where(x => x.IsCurrent &&
-            (EF.Functions.ILike(x.ScientificName, pattern, "\\") ||
-             (x.Genus != null && EF.Functions.ILike(x.Genus, pattern, "\\")) ||
-             (x.SpecificEpithet != null && EF.Functions.ILike(x.SpecificEpithet, pattern, "\\"))))
-            .OrderBy(x => x.ScientificName).ThenBy(x => x.TaxonId).Take(size)
-            .Select(x => new
-            {
-                x.TaxonId, x.ScientificName, x.ScientificNameAuthorship, x.TaxonRank,
-                x.TaxonomicStatus, x.Family, x.Genus
-            }).ToListAsync(cancellationToken);
+        var normalized = NameNormalizer.Normalize(q);
+        var results = await db.Database.SqlQueryRaw<PlantSearchResult>(SearchSql,
+            new NpgsqlParameter("q", q),
+            new NpgsqlParameter("contains", "%" + EscapeLike(q) + "%"),
+            new NpgsqlParameter("prefix", EscapeLike(q) + "%"),
+            new NpgsqlParameter("wordSpace", "% " + EscapeLike(q) + "%"),
+            new NpgsqlParameter("wordHyphen", "%-" + EscapeLike(q) + "%"),
+            // A query that normalizes to nothing (only combining marks) must not match every common name.
+            new NpgsqlParameter("searchCommon", normalized.Length > 0),
+            new NpgsqlParameter("nq", normalized),
+            new NpgsqlParameter("ncontains", "%" + EscapeLike(normalized) + "%"),
+            new NpgsqlParameter("nprefix", EscapeLike(normalized) + "%"),
+            new NpgsqlParameter("nwordSpace", "% " + EscapeLike(normalized) + "%"),
+            new NpgsqlParameter("nwordHyphen", "%-" + EscapeLike(normalized) + "%"),
+            new NpgsqlParameter("size", size)).ToListAsync(cancellationToken);
         return Ok(results);
+    }
+
+    // Treat SQL pattern characters in user input as literal text.
+    private static string EscapeLike(string value) => value.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_");
+
+    // Genus before species before infraspecific ranks; "notho" (hybrid) ranks sort with their base rank.
+    private static readonly string RankDepthSql = "CASE regexp_replace(lower(t.\"TaxonRank\"), '^notho', '') " + string.Join(" ", new[]
+    {
+        "kingdom", "subkingdom", "phylum", "subphylum", "class", "subclass", "superorder", "order", "suborder",
+        "family", "subfamily", "tribe", "subtribe", "genus", "subgenus", "section", "subsection", "series", "subseries",
+        "species", "subspecies", "prole", "variety", "subvariety", "form", "subform", "lusus"
+    }.Select((rank, depth) => $"WHEN '{rank}' THEN {depth}")) + " ELSE 1000 END";
+
+    // One row per accepted taxon: synonyms report against their current accepted taxon, common names against the
+    // link's accepted taxon, and taxa without one (Unchecked, dangling synonyms) as themselves. Each taxon keeps its
+    // best match: exact, prefix, word prefix, then substring. The trigram indexes serve the ILIKE/LIKE filters.
+    private static readonly string SearchSql = $$"""
+        WITH scientific AS (
+            SELECT CASE WHEN t."TaxonomicStatus" = 'Synonym' AND a."Id" IS NOT NULL THEN a."Id" ELSE t."Id" END AS target_id,
+                CASE WHEN t."TaxonomicStatus" = 'Synonym' AND a."Id" IS NOT NULL THEN 'synonym' ELSE 'scientificName' END AS matched_on,
+                CASE WHEN t."TaxonomicStatus" = 'Synonym' AND a."Id" IS NOT NULL THEN 1 ELSE 0 END AS source_order,
+                t."ScientificName" AS matched_text,
+                CASE WHEN lower(t."ScientificName") = lower(@q) THEN 1
+                     WHEN t."ScientificName" ILIKE @prefix ESCAPE '\' THEN 2
+                     WHEN t."ScientificName" ILIKE @wordSpace ESCAPE '\' OR t."ScientificName" ILIKE @wordHyphen ESCAPE '\' THEN 3
+                     ELSE 4 END AS tier
+            FROM reference.wfo_taxon t
+            LEFT JOIN reference.wfo_taxon a ON a."Id" = t."AcceptedTaxonId" AND a."IsCurrent"
+            WHERE t."IsCurrent" AND (t."ScientificName" ILIKE @contains ESCAPE '\' OR t."Genus" ILIKE @contains ESCAPE '\')
+        ), common AS (
+            SELECT coalesce(l."AcceptedWfoTaxonId", l."WfoTaxonId") AS target_id, 'commonName' AS matched_on, 2 AS source_order,
+                n."Name" AS matched_text,
+                CASE WHEN n."NormalizedName" = @nq THEN 1
+                     WHEN n."NormalizedName" LIKE @nprefix ESCAPE '\' THEN 2
+                     WHEN n."NormalizedName" LIKE @nwordSpace ESCAPE '\' OR n."NormalizedName" LIKE @nwordHyphen ESCAPE '\' THEN 3
+                     ELSE 4 END AS tier
+            FROM reference.wikidata_common_name n
+            JOIN reference.wikidata_wfo_link l ON l."ItemId" = n."ItemId" AND l."IsCurrent"
+            WHERE @searchCommon AND (n."Language" = 'en' OR n."Language" LIKE 'en-%')
+                AND n."NormalizedName" LIKE @ncontains ESCAPE '\'
+        ), best AS (
+            SELECT DISTINCT ON (m.target_id) m.target_id, m.tier, m.matched_on, m.matched_text
+            FROM (SELECT * FROM scientific UNION ALL SELECT * FROM common) m
+            WHERE m.target_id IS NOT NULL
+            ORDER BY m.target_id, m.tier, m.source_order, length(m.matched_text), m.matched_text COLLATE "C"
+        ), page AS (
+            SELECT t."Id", t."TaxonId", t."ScientificName", t."ScientificNameAuthorship", t."TaxonRank", t."TaxonomicStatus",
+                t."Family", t."Genus", b.tier, b.matched_on, b.matched_text,
+                t."TaxonomicStatus" IS DISTINCT FROM 'Accepted' AS not_accepted, {{RankDepthSql}} AS depth
+            FROM best b JOIN reference.wfo_taxon t ON t."Id" = b.target_id AND t."IsCurrent"
+            ORDER BY b.tier, not_accepted, depth, t."ScientificName" COLLATE "C", t."TaxonId" COLLATE "C"
+            LIMIT @size
+        )
+        SELECT p."TaxonId", p."ScientificName", p."ScientificNameAuthorship", p."TaxonRank", p."TaxonomicStatus",
+            p."Family", p."Genus", c."Name" AS "CommonName", p.matched_on AS "MatchedOn", p.matched_text AS "MatchedText"
+        FROM page p
+        LEFT JOIN LATERAL (
+            SELECT n."Name" FROM reference.wikidata_common_name n
+            JOIN reference.wikidata_wfo_link l ON l."ItemId" = n."ItemId" AND l."IsCurrent"
+            WHERE (l."AcceptedWfoTaxonId" = p."Id" OR (l."AcceptedWfoTaxonId" IS NULL AND l."WfoTaxonId" = p."Id"))
+                AND (n."Language" = 'en' OR n."Language" LIKE 'en-%')
+            ORDER BY n."Language" <> 'en', NOT (@searchCommon AND n."NormalizedName" LIKE @ncontains ESCAPE '\'),
+                length(n."Name"), n."Name" COLLATE "C"
+            LIMIT 1
+        ) c ON true
+        ORDER BY p.tier, p.not_accepted, p.depth, p."ScientificName" COLLATE "C", p."TaxonId" COLLATE "C"
+        """;
+
+    // Wikidata and WFO strings are untrusted source text; clients must render them as text, never HTML.
+    public sealed class PlantSearchResult
+    {
+        public required string TaxonId { get; init; }
+        public required string ScientificName { get; init; }
+        public string? ScientificNameAuthorship { get; init; }
+        public string? TaxonRank { get; init; }
+        public string? TaxonomicStatus { get; init; }
+        public string? Family { get; init; }
+        public string? Genus { get; init; }
+        public string? CommonName { get; init; }
+        public required string MatchedOn { get; init; }
+        public required string MatchedText { get; init; }
     }
 
     [HttpGet("{taxonId}")]

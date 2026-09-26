@@ -119,8 +119,8 @@ public sealed class WfoPostgresTests
         Assert.Equal(20, search.Length);
         Assert.False(search[0].TryGetProperty("taxonRemarks", out _));
         Assert.Equal(26, (await client.GetFromJsonAsync<JsonElement[]>("/api/reference/plants/search?q=acer&pageSize=100"))!.Length);
-        Assert.Single((await client.GetFromJsonAsync<JsonElement[]>("/api/reference/plants/search?q=epithet24"))!);
-        Assert.Empty((await client.GetFromJsonAsync<JsonElement[]>("/api/reference/plants/search?q=%25"))!);
+        Assert.Single((await client.GetFromJsonAsync<JsonElement[]>("/api/reference/plants/search?q=species%2024"))!);
+        Assert.Empty((await client.GetFromJsonAsync<JsonElement[]>("/api/reference/plants/search?q=%25%25"))!);
         Assert.Equal(HttpStatusCode.BadRequest, (await client.GetAsync("/api/reference/plants/search?q=acer&pageSize=101")).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await client.GetAsync("/api/reference/plants/search")).StatusCode);
         var details = await client.GetFromJsonAsync<JsonElement>("/api/reference/plants/wfo-synonym");

@@ -425,7 +425,7 @@ public sealed class WikidataPostgresTests
             .ImportAsync(full, limit);
     }
 
-    private static string[] Taxon(string id, string name, string status = "Accepted", string? accepted = null, string rank = "species")
+    internal static string[] Taxon(string id, string name, string status = "Accepted", string? accepted = null, string rank = "species")
     {
         var row = WfoParserTests.Row(id, name);
         row[4] = rank;
@@ -434,7 +434,7 @@ public sealed class WikidataPostgresTests
         return row;
     }
 
-    private static async Task<long> ImportBackboneAsync(WfoPostgresTests.TestDatabase database, string version, params string[][] rows) =>
+    internal static async Task<long> ImportBackboneAsync(WfoPostgresTests.TestDatabase database, string version, params string[][] rows) =>
         (await database.ImportAsync(WfoParserTests.Tsv(rows), version)).ImportId;
 
     private static async Task<Dictionary<string, long>> TaxonIdsAsync(WfoPostgresTests.TestDatabase database)
