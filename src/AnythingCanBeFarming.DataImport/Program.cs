@@ -4,13 +4,74 @@ namespace AnythingCanBeFarming.DataImport;
 
 internal static class Program
 {
+    private const string Usage = """
+        Usage: dotnet run --project src/AnythingCanBeFarming.DataImport -- wfo [backbone|supplemental|all] [--directory <package>] [--file <backbone TSV>] [--version <release>] [--force] [--diagnostics <backbone jsonl>]
+               dotnet run --project src/AnythingCanBeFarming.DataImport -- wikidata crosswalk [--allow-shrink]
+        """;
+
     public static async Task<int> Main(string[] args)
     {
-        if (args.Length == 0 || args[0] != "wfo" || args.Contains("--help"))
+        if (args.Length == 0 || args[0] is not ("wfo" or "wikidata") || args.Contains("--help"))
         {
-            Console.WriteLine("Usage: dotnet run --project src/AnythingCanBeFarming.DataImport -- wfo [backbone|supplemental|all] [--directory <package>] [--file <backbone TSV>] [--version <release>] [--force] [--diagnostics <backbone jsonl>]");
+            Console.WriteLine(Usage);
             return args.Contains("--help") ? 0 : 1;
         }
+        return args[0] == "wikidata" ? await WikidataAsync(args) : await WfoAsync(args);
+    }
+
+    private static async Task<int> WikidataAsync(string[] args)
+    {
+        try
+        {
+            var mode = args.Length > 1 ? args[1] : throw new InvalidDataException("Specify a Wikidata command: crosswalk.");
+            if (mode is not "crosswalk") throw new InvalidDataException($"Unknown Wikidata command: {mode}");
+            var allowShrink = false;
+            foreach (var option in args.Skip(2))
+            {
+                if (option == "--allow-shrink") allowShrink = true;
+                else throw new InvalidDataException($"Unknown or incomplete option: {option}");
+            }
+            string? root = null;
+            try { root = WfoSource.FindRepositoryRoot(); }
+            catch (InvalidOperationException) { }
+            var settings = LoadSettings(root);
+            var connection = ConnectionString(settings);
+            using var cancellation = new CancellationTokenSource();
+            Console.CancelKeyPress += (_, e) => { e.Cancel = true; cancellation.Cancel(); };
+            using var clients = new WikidataClients(WikidataOptions.FromConfiguration(settings));
+            await new WikidataCrosswalkImporter(connection, clients.Sparql, clients.Api, Console.Out)
+                .ImportAsync(allowShrink, cancellation.Token);
+            return 0;
+        }
+        catch (Exception exception)
+        {
+            // Never print connection strings, request URLs, or response bodies.
+            Console.Error.WriteLine(exception is InvalidOperationException or InvalidDataException
+                ? exception.Message : $"Import failed ({exception.GetType().Name}). Check configuration and output.");
+            return 1;
+        }
+    }
+
+    private static IConfiguration LoadSettings(string? root)
+    {
+        var environment = Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT")
+            ?? Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Development";
+        var configuration = new ConfigurationBuilder();
+        if (root != null)
+        {
+            var apiDirectory = Path.Combine(root, "src", "AnythingCanBeFarming.Api");
+            configuration.SetBasePath(apiDirectory).AddJsonFile("appsettings.json", optional: true)
+                .AddJsonFile($"appsettings.{environment}.json", optional: true);
+        }
+        if (environment == "Development") configuration.AddUserSecrets("acbf-api-local-development");
+        return configuration.AddEnvironmentVariables().Build();
+    }
+
+    private static string ConnectionString(IConfiguration settings) => settings.GetConnectionString("acbf")
+        ?? throw new InvalidOperationException("Configure ConnectionStrings:acbf using API user secrets or ConnectionStrings__acbf (use the Aspire database endpoint).");
+
+    private static async Task<int> WfoAsync(string[] args)
+    {
         try
         {
             string? file = null, version = null, diagnosticPath = null, directory = null;
@@ -39,19 +100,7 @@ internal static class Program
             catch (InvalidOperationException) when (file != null || directory != null) { }
             if (mode == "supplemental" && (file != null || diagnosticPath != null))
                 throw new InvalidDataException("Use --directory for supplemental files. --file and --diagnostics apply to backbone imports only.");
-            var environment = Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT")
-                ?? Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Development";
-            var configuration = new ConfigurationBuilder();
-            if (root != null)
-            {
-                var apiDirectory = Path.Combine(root, "src", "AnythingCanBeFarming.Api");
-                configuration.SetBasePath(apiDirectory).AddJsonFile("appsettings.json", optional: true)
-                    .AddJsonFile($"appsettings.{environment}.json", optional: true);
-            }
-            if (environment == "Development") configuration.AddUserSecrets("acbf-api-local-development");
-            var settings = configuration.AddEnvironmentVariables().Build();
-            var connection = settings.GetConnectionString("acbf")
-                ?? throw new InvalidOperationException("Configure ConnectionStrings:acbf using API user secrets or ConnectionStrings__acbf (use the Aspire database endpoint).");
+            var connection = ConnectionString(LoadSettings(root));
             directory = Path.GetFullPath(directory ?? (root != null ? Path.Combine(root, "data", "imports", "wfo") : Path.GetDirectoryName(Path.GetFullPath(file!))!));
             // Resolve ambiguities before publishing any part of a package.
             var supplemental = mode == "backbone" ? [] : Enum.GetValues<WfoSupplementalKind>()
