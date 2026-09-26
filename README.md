@@ -364,6 +364,46 @@ Before each phase, the importer checks that every property it reads still has th
 
 See [Wikidata validation](docs/wikidata-validation.md) for observed counts, coverage, and search timings.
 
+## USDA PLANTS traits
+
+USDA PLANTS characteristics (growth habit, duration, tolerances, heights, bloom, colors, and more) and state distribution are staged from the Encyclopedia of Life's Darwin Core Archive: **"USDA PLANTS structured data DwCA", Zenodo record 18945513, version 8 (2026-03-10), [doi:10.5281/zenodo.18945513](https://doi.org/10.5281/zenodo.18945513)**. The underlying data is USDA NRCS, The PLANTS Database (https://plants.usda.gov), a US government work; credit it as the source. Values are staged exactly as the archive states them. The curated catalog, trait precedence, and zone calculation are a later spec.
+
+Download `usda_plant_traits.tar.gz` from the Zenodo record and extract it under `data/imports/usda/`. Everything there except `.gitkeep` is Git-ignored, including the `usda-import-*.jsonl` diagnostics. The importer finds `meta.xml` in that folder or its only subfolder and never modifies the files. Apply the migrations, import the WFO backbone (and ideally Wikidata, which supplies most links), then run:
+
+```sh
+dotnet run --project src/AnythingCanBeFarming.DataImport -- usda [--directory <archive>] [--force] [--version 8] [--zenodo-record 18945513] [--diagnostics <jsonl>]
+dotnet run --project src/AnythingCanBeFarming.DataImport -- usda link
+dotnet run --project src/AnythingCanBeFarming.DataImport -- usda verify [--sample 20] [--symbols ACSA3,COFL2,...] [--seed 42]
+```
+
+- **Import** (about 30 seconds) validates `meta.xml` against the expected Taxon, Occurrence, and MeasurementOrFact columns, then hashes the three data files. An identical successful source hash is skipped unless `--force` is given. `--version` and `--zenodo-record` default to the release above and are recorded in `source_import` (source `USDA`, kind `EolTraits`). The files stream through binary COPY staging and publish in one transaction:
+  - `usda_taxon` is upserted by symbol, and absent symbols become `IsCurrent = false`.
+  - `usda_fact` and `usda_distribution` are replaced wholesale, with remarks and measurement-method text deduplicated into `usda_remark`.
+  - `usda_wfo_link` is rebuilt.
+
+  Missing IDs, duplicate symbols or occurrence IDs, and facts pointing at unknown occurrences fail publication. Occurrences whose taxon is missing from `taxon.tab` (18,284 in release 8) are skipped with one warning per symbol. The console and `ValidationJson` report file hashes, rows, rejections, warnings by kind, facts by trait, taxa with characteristics, unmapped and unresolved values, distribution counts (including taxa present in Ohio), link outcomes, and taxa with more than two heights.
+- **Link** connects each current symbol to WFO. It uses Wikidata first: an item carrying the symbol as P1772 and a current, resolved WFO link. One distinct taxon gives `Linked`; several give `Conflict`. Otherwise it falls back to an exact normalized name at the same rank: one match gives `Linked`, several give `Ambiguous`, and none gives `NotFound`. Candidates go to `DetailJson`, and nothing is guessed. The accepted taxon follows the Wikidata rule (the taxon itself if `Accepted`, its accepted taxon if a `Synonym`). Every import relinks, and so does every `wfo` command, after Wikidata re-resolution. Run `usda link` after refreshing Wikidata.
+- **Verify** compares imported labels with USDA's live labeled characteristics. The sample is deterministic and seeded, drawn from taxa with characteristics, and always includes ACSA3, COFL2, RUHI2, and ECPU. It prints agreements and disagreements per trait, inferred codes that were confirmed, unmapped codes seen next to USDA values, and shade tolerance under both hypotheses. It exits 2 if any `verified` code disagrees. It uses USDA's unofficial JSON backend (`plantsservices.sc.egov.usda.gov`) as a verification aid only; the import never depends on it. Requests are one at a time, at least 500 ms apart, with the Wikidata User-Agent (override with `Usda:UserAgent`).
+
+**Seed files.** Readable values come from three committed, human-reviewed files under `data/reference/`. The importer makes the database tables match them exactly on every run, even when the data import is skipped, and prints how many rows changed.
+
+| File | Contents |
+| --- | --- |
+| `usda-trait-types.csv` | Each `measurementType` → stable `key` (e.g. `shade_tolerance`), label, and value kind (`coded`, `numeric`, `literal`, `multi`) |
+| `usda-code-labels.csv` | Each value code (the URI's last segment, or the literal) → label, ordinal, `confidence` (`verified`, `inferred`, `unresolved`), and `evidence`. A row with `type_uri` set overrides the generic row for that one trait. |
+| `place-labels.csv` | GeoNames and Wikidata place IDs → name, kind, country and admin codes. Regenerate it with `tools/generate-place-labels.cs` from GeoNames' `admin1CodesASCII.txt` and `countryInfo.txt` (CC BY 4.0). |
+
+To change a label, edit its row, cite what you checked in `evidence` (e.g. `usda verify 2026-09-26: 12 taxa agree, 0 disagree`), and rerun `usda`. Mark a label `verified` only when evidence supports it; `usda verify` lists inferred codes it confirmed. The view `reference.usda_fact_labeled` joins facts to trait keys and labels for inspection, e.g. `SELECT trait_key, value_display FROM reference.usda_fact_labeled WHERE symbol = 'ACSA3'`.
+
+**Known quirks** (details in [USDA validation](docs/usda-validation.md)):
+
+- `FamilyUsda` uses USDA's older family circumscriptions (e.g. *Aceraceae*). Never use it as the family.
+- **Height:** a taxon has one or two `height_ft` facts. The spec assumed mature height is the larger one, but it is not always: select it by `StatisticalMethod` SIO_001110 (mature) rather than SIO_001114 (maximum at 20 years).
+- **Shade tolerance is unresolved.** The archive's shade codes and USDA's live service disagree in direction on every Low/High value. Independent sources support the archive read directly (the same way as every other tolerance trait). Until a human decides and seeds labels, `shade_tolerance` shows the raw code as `unresolved`, and nothing may present sun or shade from USDA.
+- **Ohio-native caveat:** USDA gives state *presence* plus native status for regions (Lower 48, Alaska, Hawaii, Canada, …), not per-state native status. "Present in Ohio and native to the contiguous US" does not mean native to Ohio.
+- GeoNames 614540 in `Present` is the country of Georgia, standing in for the US state. The row's remark says "Georgia".
+- Measurement and occurrence IDs are positional and are never used as durable keys.
+
 ## Stop, restart, and reset
 
 Stop debugging (or Ctrl+C for a CLI run). Normal shutdown stops the app's containers and host processes; the named PostgreSQL volume **`acbf-postgres-data` remains**. The next launch reuses it. Keep the AppHost's generated password user secret: PostgreSQL uses the original password stored in that initialized volume.
