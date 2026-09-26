@@ -16,6 +16,7 @@ public static class PlantNetServiceCollectionExtensions
         {
             client.BaseAddress = new Uri("https://my-api.plantnet.org/");
             client.DefaultRequestHeaders.Accept.ParseAdd("application/json");
+            client.Timeout = TimeSpan.FromSeconds(30);
         })
         // Pl@ntNet requires the private API key in the query string.
         .RemoveAllLoggers();
