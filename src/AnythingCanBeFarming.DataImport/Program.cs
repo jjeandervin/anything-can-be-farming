@@ -7,6 +7,7 @@ internal static class Program
     private const string Usage = """
         Usage: dotnet run --project src/AnythingCanBeFarming.DataImport -- wfo [backbone|supplemental|all] [--directory <package>] [--file <backbone TSV>] [--version <release>] [--force] [--diagnostics <backbone jsonl>]
                dotnet run --project src/AnythingCanBeFarming.DataImport -- wikidata crosswalk [--allow-shrink]
+               dotnet run --project src/AnythingCanBeFarming.DataImport -- wikidata resolve
         """;
 
     public static async Task<int> Main(string[] args)
@@ -23,12 +24,12 @@ internal static class Program
     {
         try
         {
-            var mode = args.Length > 1 ? args[1] : throw new InvalidDataException("Specify a Wikidata command: crosswalk.");
-            if (mode is not "crosswalk") throw new InvalidDataException($"Unknown Wikidata command: {mode}");
+            var mode = args.Length > 1 ? args[1] : throw new InvalidDataException("Specify a Wikidata command: crosswalk or resolve.");
+            if (mode is not ("crosswalk" or "resolve")) throw new InvalidDataException($"Unknown Wikidata command: {mode}");
             var allowShrink = false;
             foreach (var option in args.Skip(2))
             {
-                if (option == "--allow-shrink") allowShrink = true;
+                if (option == "--allow-shrink" && mode == "crosswalk") allowShrink = true;
                 else throw new InvalidDataException($"Unknown or incomplete option: {option}");
             }
             string? root = null;
@@ -38,6 +39,11 @@ internal static class Program
             var connection = ConnectionString(settings);
             using var cancellation = new CancellationTokenSource();
             Console.CancelKeyPress += (_, e) => { e.Cancel = true; cancellation.Cancel(); };
+            if (mode == "resolve")
+            {
+                await WikidataLinkResolver.RunAsync(connection, Console.Out, cancellation.Token);
+                return 0;
+            }
             using var clients = new WikidataClients(WikidataOptions.FromConfiguration(settings));
             await new WikidataCrosswalkImporter(connection, clients.Sparql, clients.Api, Console.Out)
                 .ImportAsync(allowShrink, cancellation.Token);
@@ -120,6 +126,9 @@ internal static class Program
             foreach (var entry in supplemental)
                 await new WfoSupplementalImporter(connection, Console.Out).ImportAsync(entry.Path, entry.Kind,
                     WfoSupplementalSource.Version(entry.Path, version), force, cancellation.Token);
+            // Backbone and deduplication changes move current and accepted taxa under existing Wikidata links.
+            Console.WriteLine("Re-resolving Wikidata links against the WFO backbone…");
+            await WikidataLinkResolver.RunAsync(connection, Console.Out, cancellation.Token);
             return 0;
         }
         catch (Exception exception)

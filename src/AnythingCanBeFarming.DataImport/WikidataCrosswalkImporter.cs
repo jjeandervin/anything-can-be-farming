@@ -30,6 +30,7 @@ public sealed class CrosswalkReport
     public long ItemsInserted { get; set; }
     public long ItemsReactivated { get; set; }
     public long ItemsRetired { get; set; }
+    public ResolutionReport? Resolution { get; set; }
     public long WarningCount { get; set; }
     public List<string> Warnings { get; } = [];
 }
@@ -163,6 +164,8 @@ public sealed class WikidataCrosswalkImporter(string connectionString, WikidataS
         CancellationToken cancellationToken)
     {
         var import = ("import", (object)importId);
+        // Take the resolution lock before touching links so a concurrent `wikidata resolve` cannot deadlock with us.
+        await session.ExecuteAsync($"SELECT pg_advisory_xact_lock({WikidataLinkResolver.LockKey})", cancellationToken);
         // A QID can state the same WFO ID more than once; keep one link, preferring the preferred-rank statement.
         await session.ExecuteAsync("""
             CREATE TEMP TABLE wikidata_crosswalk ON COMMIT DROP AS
@@ -228,6 +231,12 @@ public sealed class WikidataCrosswalkImporter(string connectionString, WikidataS
             SELECT count(*) FROM retired
             """, cancellationToken, import))[0];
         await session.ExecuteAsync("ANALYZE reference.wikidata_item; ANALYZE reference.wikidata_wfo_link;", cancellationToken);
+        output.WriteLine("Resolving links against the WFO backbone…");
+        report.Resolution = await WikidataLinkResolver.ResolveAsync(session.Connection, cancellationToken);
+        report.WarningCount += report.Resolution.MalformedWfoIds;
+        report.Warnings.AddRange(report.Resolution.MalformedWfoIdExamples
+            .Take(SparqlParseStats.MaximumExamples - report.Warnings.Count)
+            .Select(x => $"WFO ID {JsonSerializer.Serialize(x)} is not well formed; resolution status NotFound."));
     }
 
     private static async Task<MultiValueSummary> MultiValueAsync(SourceImportSession session, string key, string value,

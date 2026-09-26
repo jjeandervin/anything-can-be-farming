@@ -174,6 +174,102 @@ public sealed class WikidataPostgresTests
             Assert.Equal(["Abandoned", "Running", "Succeeded"], await db.SourceImports.OrderBy(x => x.Id).Select(x => x.Status).ToListAsync());
     }
 
+    [PostgresFact]
+    public async Task Resolution_follows_deduplication_to_current_and_accepted_taxa_and_refreshes_after_backbone_import()
+    {
+        await using var database = await WfoPostgresTests.TestDatabase.CreateAsync();
+        var backbone = await ImportBackboneAsync(database, "2026-06",
+            Taxon("wfo-0000000001", "Acer palmatum"),
+            Taxon("wfo-0000000002", "Acer polymorphum", "Synonym", "wfo-0000000001"),
+            Taxon("wfo-0000000003", "Acer dubium", "Unchecked"),
+            Taxon("wfo-0000000004", "Acer rubrum"),
+            Taxon("wfo-0000000005", "Acer", rank: "genus"));
+        await using (var db = database.Context())
+        {
+            foreach (var (from, to) in new[]
+            {
+                ("wfo-0000000010", "wfo-0000000011"), ("wfo-0000000011", "wfo-0000000002"),
+                ("wfo-0000000020", "wfo-0000000021"), ("wfo-0000000021", "wfo-0000000020")
+            })
+                db.WfoDeduplicatedIds.Add(new() { DeprecatedWfoId = from, ReplacementWfoId = to, ImportId = backbone });
+            await db.SaveChangesAsync();
+        }
+        var fake = new FakeWikidata();
+        foreach (var (qid, wfo) in new[]
+        {
+            ("Q1", "wfo-0000000001"), ("Q2", "wfo-0000000002"), ("Q3", "wfo-0000000003"), ("Q4", "wfo-0000000010"),
+            ("Q5", "wfo-0000000099"), ("Q6", "wfo-0000000020"), ("Q7", "WFO-0000000001"), ("Q8", "wfo-1x"),
+            ("Q9", "wfo-0000000001\n")
+        }) fake.Add(qid, wfo);
+
+        var crosswalk = await CrosswalkAsync(database, fake);
+        var resolution = crosswalk.Report.Resolution!;
+        Assert.Equal(9, resolution.CurrentLinks);
+        Assert.Equal(new Dictionary<string, long> { ["Cycle"] = 1, ["NotFound"] = 4, ["Resolved"] = 4 }, resolution.ResolutionStatus);
+        Assert.Equal(4, resolution.LinksResolvedToCurrentTaxon);
+        Assert.Equal(3, resolution.LinksWithAcceptedTaxon);
+        Assert.Equal(1, resolution.LinksRedirectedThroughDeduplication); // The cycle ends where it started.
+        Assert.Equal(3, resolution.MalformedWfoIds);
+        Assert.Equal(3, crosswalk.Report.WarningCount);
+        Assert.Equal(new CoverageSummary(2, 1, 50), resolution.Coverage);
+
+        var taxa = await TaxonIdsAsync(database);
+        var links = await LinksAsync(database);
+        Assert.Equal(("wfo-0000000001", "Resolved", taxa["wfo-0000000001"], taxa["wfo-0000000001"]), links["Q1"]);
+        Assert.Equal(("wfo-0000000002", "Resolved", taxa["wfo-0000000002"], taxa["wfo-0000000001"]), links["Q2"]);
+        Assert.Equal(("wfo-0000000003", "Resolved", taxa["wfo-0000000003"], (long?)null), links["Q3"]);
+        Assert.Equal(("wfo-0000000002", "Resolved", taxa["wfo-0000000002"], taxa["wfo-0000000001"]), links["Q4"]);
+        Assert.Equal(("wfo-0000000099", "NotFound", (long?)null, (long?)null), links["Q5"]);
+        Assert.Equal("Cycle", links["Q6"].Status);
+        Assert.Null(links["Q6"].Taxon);
+        foreach (var malformed in new[] { "Q7", "Q8", "Q9" })
+            Assert.Equal(((string?)null, "NotFound", (long?)null, (long?)null), links[malformed]);
+
+        // Nothing changed upstream: resolving again rewrites nothing.
+        Assert.Equal(0, (await WikidataLinkResolver.RunAsync(database.ConnectionString, TextWriter.Null, default)).LinksChanged);
+
+        // Backbone refresh: palmatum becomes a synonym of rubrum and dubium disappears.
+        await ImportBackboneAsync(database, "2026-12",
+            Taxon("wfo-0000000001", "Acer palmatum", "Synonym", "wfo-0000000004"),
+            Taxon("wfo-0000000002", "Acer polymorphum", "Synonym", "wfo-0000000004"),
+            Taxon("wfo-0000000004", "Acer rubrum"),
+            Taxon("wfo-0000000005", "Acer", rank: "genus"));
+        var refreshed = await WikidataLinkResolver.RunAsync(database.ConnectionString, TextWriter.Null, default);
+        Assert.Equal(4, refreshed.LinksChanged);
+        links = await LinksAsync(database);
+        Assert.Equal(("wfo-0000000001", "Resolved", taxa["wfo-0000000001"], taxa["wfo-0000000004"]), links["Q1"]);
+        Assert.Equal(taxa["wfo-0000000004"], links["Q2"].Accepted);
+        Assert.Equal(taxa["wfo-0000000004"], links["Q4"].Accepted);
+        Assert.Equal(("wfo-0000000003", "NotFound", (long?)null, (long?)null), links["Q3"]);
+        Assert.Equal(new CoverageSummary(1, 1, 100), refreshed.Coverage);
+    }
+
+    private static string[] Taxon(string id, string name, string status = "Accepted", string? accepted = null, string rank = "species")
+    {
+        var row = WfoParserTests.Row(id, name);
+        row[4] = rank;
+        row[18] = status;
+        if (accepted != null) row[19] = accepted;
+        return row;
+    }
+
+    private static async Task<long> ImportBackboneAsync(WfoPostgresTests.TestDatabase database, string version, params string[][] rows) =>
+        (await database.ImportAsync(WfoParserTests.Tsv(rows), version)).ImportId;
+
+    private static async Task<Dictionary<string, long>> TaxonIdsAsync(WfoPostgresTests.TestDatabase database)
+    {
+        await using var db = database.Context();
+        return await db.WfoTaxa.ToDictionaryAsync(x => x.TaxonId, x => x.Id);
+    }
+
+    private static async Task<Dictionary<string, (string? Resolved, string Status, long? Taxon, long? Accepted)>> LinksAsync(
+        WfoPostgresTests.TestDatabase database)
+    {
+        await using var db = database.Context();
+        return (await db.WikidataWfoLinks.AsNoTracking().ToListAsync())
+            .ToDictionary(x => x.Qid, x => (x.ResolvedWfoId, x.ResolutionStatus, x.WfoTaxonId, x.AcceptedWfoTaxonId));
+    }
+
     internal static FakeWikidata Sample()
     {
         var fake = new FakeWikidata();
