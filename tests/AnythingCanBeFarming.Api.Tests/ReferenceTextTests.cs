@@ -42,6 +42,14 @@ public sealed class ReferenceTextTests
     }
 
     [Theory]
+    [InlineData("black-eyed susan", "blackeyedsusan")]
+    [InlineData("blackeyed susan", "blackeyedsusan")]
+    [InlineData("queen anne's lace", "queenanne'slace")]
+    [InlineData("--", "")]
+    public void Compacts_normalized_names_without_spaces_or_hyphens(string normalized, string expected) =>
+        Assert.Equal(expected, NameNormalizer.Compact(normalized));
+
+    [Theory]
     [InlineData("Q1", true)]
     [InlineData("Q159657", true)]
     [InlineData("Q0", false)]

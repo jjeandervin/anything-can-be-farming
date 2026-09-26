@@ -27,4 +27,8 @@ public static class NameNormalizer
         }
         return builder.ToString();
     }
+
+    // A normalized name without spaces or hyphens, so "black-eyed susan" meets "blackeyed susan".
+    // wikidata_common_name.CompactName is generated with the same rule in SQL.
+    public static string Compact(string normalized) => normalized.Replace(" ", "").Replace("-", "");
 }

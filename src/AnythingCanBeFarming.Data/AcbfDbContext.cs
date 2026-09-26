@@ -113,6 +113,11 @@ public sealed class AcbfDbContext(DbContextOptions<AcbfDbContext> options) : DbC
         commonNames.ToTable("wikidata_common_name", "reference");
         commonNames.Property(x => x.Id).UseIdentityByDefaultColumn();
         commonNames.HasIndex(x => new { x.ItemId, x.Language, x.Name }).IsUnique();
+        // Keep this expression identical to NameNormalizer.Compact.
+        commonNames.Property(x => x.CompactName)
+            .HasComputedColumnSql("""replace(replace("NormalizedName", ' ', ''), '-', '')""", stored: true);
+        commonNames.HasIndex(x => x.CompactName, "IX_wikidata_common_name_CompactName_trgm")
+            .HasMethod("gin").HasOperators("gin_trgm_ops");
         commonNames.HasIndex(x => x.NormalizedName, "IX_wikidata_common_name_NormalizedName_trgm")
             .HasMethod("gin").HasOperators("gin_trgm_ops");
         commonNames.HasOne<WikidataItem>().WithMany().HasForeignKey(x => x.ItemId).OnDelete(DeleteBehavior.Restrict);

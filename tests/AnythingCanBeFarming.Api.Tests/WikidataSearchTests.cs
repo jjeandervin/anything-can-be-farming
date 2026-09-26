@@ -46,10 +46,16 @@ public sealed class WikidataSearchTests
         Assert.Equal(maple.Length, maple.Select(x => x.GetProperty("taxonId").GetString()).Distinct().Count());
         Assert.Equal(["Acer palmatum", "Acer rubrum", "Mystery plant"], maple.Select(Name).Order(StringComparer.Ordinal));
 
-        Assert.Equal(("Rudbeckia hirta", "commonName", "black-eyed Susan", "black-eyed Susan"),
-            Summary(Assert.Single(await SearchAsync(client, "Black-Eyed  Susan"))));
-        Assert.Equal("Rudbeckia hirta", Name(Assert.Single(await SearchAsync(client, "eyed"))));
+        // Spaces and hyphens are ignored as a fallback: an exact compact match ranks just below a true exact match.
+        var susan = await SearchAsync(client, "Black-Eyed  Susan");
+        Assert.Equal([("Rudbeckia hirta", "commonName", "blackeyed Susan", "blackeyed Susan"),
+            ("Thunbergia alata", "commonName", "black-eyed Susan vine", "black-eyed Susan vine")], susan.Select(Summary));
+        Assert.Equal(["Thunbergia alata", "Rudbeckia hirta"], (await SearchAsync(client, "eyed")).Select(Name));
+        // Other compact-only matches rank below every ordinary substring match.
+        Assert.Equal(["Rudbeckia hirta", "Thunbergia alata"], (await SearchAsync(client, "blackeyed")).Select(Name));
+        Assert.Equal(["Rudbeckia hirta"], (await SearchAsync(client, "black eyed susan")).Take(1).Select(Name));
         Assert.Empty(await SearchAsync(client, "%_"));
+        Assert.Empty(await SearchAsync(client, "- -"));
     }
 
     [PostgresFact]
@@ -89,6 +95,23 @@ public sealed class WikidataSearchTests
         Assert.Equal(["Acer palmatum", "Acer rubrum"], (await SearchAsync(client, "acer ")).Skip(1).Take(2).Select(Name));
     }
 
+    // Read-only smoke test against a database with the full WFO snapshot and a Wikidata import.
+    [PostgresFact("ACBF_TEST_WFO_SNAPSHOT")]
+    public async Task Full_snapshot_common_names_find_their_accepted_taxa()
+    {
+        using var factory = new InfrastructureTests.ApiFactory(connectionString: Environment.GetEnvironmentVariable("ACBF_TEST_WFO_SNAPSHOT")!);
+        using var client = Client(factory);
+        Assert.Equal("Acer palmatum", Name((await SearchAsync(client, "Japanese maple"))[0]));
+        Assert.Contains("Acer rubrum", (await SearchAsync(client, "red maple")).Take(3).Select(Name));
+        Assert.Contains("Acer saccharum", (await SearchAsync(client, "sugar maple")).Take(3).Select(Name));
+        Assert.Contains("Rudbeckia hirta", (await SearchAsync(client, "black-eyed susan")).Take(3).Select(Name));
+        var hosta = (await SearchAsync(client, "hosta"))[0];
+        Assert.Equal(("Hosta", "genus"), (Name(hosta), hosta.GetProperty("taxonRank").GetString()));
+        var timer = System.Diagnostics.Stopwatch.StartNew();
+        Assert.NotEmpty(await SearchAsync(client, "maple"));
+        Assert.True(timer.ElapsedMilliseconds < 500, $"maple took {timer.ElapsedMilliseconds} ms");
+    }
+
     private static async Task<WfoPostgresTests.TestDatabase> SeedAsync()
     {
         var database = await WfoPostgresTests.TestDatabase.CreateAsync();
@@ -104,7 +127,8 @@ public sealed class WikidataSearchTests
             WikidataPostgresTests.Taxon("wfo-0000000009", "Mystery plant", "Unchecked"),
             // As in WFO, "Hosta" is also a synonym genus name that points to another accepted genus.
             WikidataPostgresTests.Taxon("wfo-0000000010", "Cornutia", rank: "genus"),
-            WikidataPostgresTests.Taxon("wfo-0000000011", "Hosta", "Synonym", "wfo-0000000010", rank: "genus"));
+            WikidataPostgresTests.Taxon("wfo-0000000011", "Hosta", "Synonym", "wfo-0000000010", rank: "genus"),
+            WikidataPostgresTests.Taxon("wfo-0000000012", "Thunbergia alata"));
         var fake = new FakeWikidata();
         void Item(string qid, string wfo, params (string Name, string Language)[] names)
         {
@@ -114,7 +138,9 @@ public sealed class WikidataSearchTests
         Item("Q2", "wfo-0000000002", ("Japanese maple", "en"), ("momiji", "en"), ("Smooth Japanese maple", "en-gb"), ("Érable du Japon", "fr"));
         Item("Q3", "wfo-0000000003", ("fullmoon maple", "en"));
         Item("Q4", "wfo-0000000004", ("red maple", "en"), ("swamp maple", "en"), ("bog maple", "en"));
-        Item("Q6", "wfo-0000000006", ("black-eyed Susan", "en"));
+        // Wikidata spells Rudbeckia hirta's English name without the hyphen.
+        Item("Q6", "wfo-0000000006", ("blackeyed Susan", "en"));
+        Item("Q12", "wfo-0000000012", ("black-eyed Susan vine", "en"));
         Item("Q7", "wfo-0000000007", ("hosta", "en"), ("plantain lily", "en"));
         Item("Q9", "wfo-0000000009", ("fired maple", "en"));
         await WikidataPostgresTests.CrosswalkAsync(database, fake);

@@ -18,7 +18,8 @@ public sealed class WikidataPostgresTests
             Assert.Equal(1L, await ScalarAsync(connection,
                 $"SELECT count(*) FROM information_schema.tables WHERE table_schema = 'reference' AND table_name = '{table}'"));
 
-        foreach (var index in new[] { "IX_wfo_taxon_ScientificName_trgm", "IX_wfo_taxon_Genus_trgm", "IX_wikidata_common_name_NormalizedName_trgm" })
+        foreach (var index in new[] { "IX_wfo_taxon_ScientificName_trgm", "IX_wfo_taxon_Genus_trgm",
+            "IX_wikidata_common_name_NormalizedName_trgm", "IX_wikidata_common_name_CompactName_trgm" })
         {
             await using var command = new NpgsqlCommand(
                 "SELECT indexdef FROM pg_indexes WHERE schemaname = 'reference' AND indexname = @name", connection);

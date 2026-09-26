@@ -24,6 +24,7 @@ public sealed class ReferencePlantsController(AcbfDbContext db, IConfiguration c
         if (size < 1 || size > maximum)
             return BadRequest(new { error = $"pageSize must be between 1 and {maximum}." });
         var normalized = NameNormalizer.Normalize(q);
+        var compact = NameNormalizer.Compact(normalized);
         var results = await db.Database.SqlQueryRaw<PlantSearchResult>(SearchSql,
             new NpgsqlParameter("q", q),
             new NpgsqlParameter("contains", "%" + EscapeLike(q) + "%"),
@@ -37,6 +38,9 @@ public sealed class ReferencePlantsController(AcbfDbContext db, IConfiguration c
             new NpgsqlParameter("nprefix", EscapeLike(normalized) + "%"),
             new NpgsqlParameter("nwordSpace", "% " + EscapeLike(normalized) + "%"),
             new NpgsqlParameter("nwordHyphen", "%-" + EscapeLike(normalized) + "%"),
+            new NpgsqlParameter("searchCompact", compact.Length > 0),
+            new NpgsqlParameter("cq", compact),
+            new NpgsqlParameter("ccontains", "%" + EscapeLike(compact) + "%"),
             new NpgsqlParameter("size", size)).ToListAsync(cancellationToken);
         return Ok(results);
     }
@@ -55,33 +59,37 @@ public sealed class ReferencePlantsController(AcbfDbContext db, IConfiguration c
 
     // One row per accepted taxon: synonyms report against their current accepted taxon, common names against the
     // link's accepted taxon, and taxa without one (Unchecked, dangling synonyms) as themselves. Each taxon keeps its
-    // best match: exact, prefix, word prefix, then substring. Within a tier, a match on the taxon's own name or common
-    // name beats a synonym match (the synonym "Hosta" must not outrank the genus Hosta). The trigram indexes serve
-    // the ILIKE/LIKE filters.
+    // best match: exact (10), prefix (20), word prefix (30), then substring (40). Common names also match with spaces
+    // and hyphens ignored ("black-eyed susan" finds "blackeyed Susan"): such an exact match ranks just below a true
+    // exact match (15), and any other compact-only match ranks last (50). Within a tier, a match on the taxon's own
+    // name or common name beats a synonym match (the synonym "Hosta" must not outrank the genus Hosta). The trigram
+    // indexes serve the ILIKE/LIKE filters.
     private static readonly string SearchSql = $$"""
         WITH scientific AS (
             SELECT CASE WHEN t."TaxonomicStatus" = 'Synonym' AND a."Id" IS NOT NULL THEN a."Id" ELSE t."Id" END AS target_id,
                 CASE WHEN t."TaxonomicStatus" = 'Synonym' AND a."Id" IS NOT NULL THEN 'synonym' ELSE 'scientificName' END AS matched_on,
                 CASE WHEN t."TaxonomicStatus" = 'Synonym' AND a."Id" IS NOT NULL THEN 1 ELSE 0 END AS source_order,
                 t."ScientificName" AS matched_text,
-                CASE WHEN lower(t."ScientificName") = lower(@q) THEN 1
-                     WHEN t."ScientificName" ILIKE @prefix ESCAPE '\' THEN 2
-                     WHEN t."ScientificName" ILIKE @wordSpace ESCAPE '\' OR t."ScientificName" ILIKE @wordHyphen ESCAPE '\' THEN 3
-                     ELSE 4 END AS tier
+                CASE WHEN lower(t."ScientificName") = lower(@q) THEN 10
+                     WHEN t."ScientificName" ILIKE @prefix ESCAPE '\' THEN 20
+                     WHEN t."ScientificName" ILIKE @wordSpace ESCAPE '\' OR t."ScientificName" ILIKE @wordHyphen ESCAPE '\' THEN 30
+                     ELSE 40 END AS tier
             FROM reference.wfo_taxon t
             LEFT JOIN reference.wfo_taxon a ON a."Id" = t."AcceptedTaxonId" AND a."IsCurrent"
             WHERE t."IsCurrent" AND (t."ScientificName" ILIKE @contains ESCAPE '\' OR t."Genus" ILIKE @contains ESCAPE '\')
         ), common AS (
             SELECT coalesce(l."AcceptedWfoTaxonId", l."WfoTaxonId") AS target_id, 'commonName' AS matched_on, 2 AS source_order,
                 n."Name" AS matched_text,
-                CASE WHEN n."NormalizedName" = @nq THEN 1
-                     WHEN n."NormalizedName" LIKE @nprefix ESCAPE '\' THEN 2
-                     WHEN n."NormalizedName" LIKE @nwordSpace ESCAPE '\' OR n."NormalizedName" LIKE @nwordHyphen ESCAPE '\' THEN 3
-                     ELSE 4 END AS tier
+                CASE WHEN n."NormalizedName" = @nq THEN 10
+                     WHEN @searchCompact AND n."CompactName" = @cq THEN 15
+                     WHEN n."NormalizedName" LIKE @nprefix ESCAPE '\' THEN 20
+                     WHEN n."NormalizedName" LIKE @nwordSpace ESCAPE '\' OR n."NormalizedName" LIKE @nwordHyphen ESCAPE '\' THEN 30
+                     WHEN n."NormalizedName" LIKE @ncontains ESCAPE '\' THEN 40
+                     ELSE 50 END AS tier
             FROM reference.wikidata_common_name n
             JOIN reference.wikidata_wfo_link l ON l."ItemId" = n."ItemId" AND l."IsCurrent"
             WHERE @searchCommon AND (n."Language" = 'en' OR n."Language" LIKE 'en-%')
-                AND n."NormalizedName" LIKE @ncontains ESCAPE '\'
+                AND (n."NormalizedName" LIKE @ncontains ESCAPE '\' OR (@searchCompact AND n."CompactName" LIKE @ccontains ESCAPE '\'))
         ), best AS (
             SELECT DISTINCT ON (m.target_id) m.target_id, m.tier, m.matched_on, m.matched_text
             FROM (SELECT * FROM scientific UNION ALL SELECT * FROM common) m
@@ -104,7 +112,8 @@ public sealed class ReferencePlantsController(AcbfDbContext db, IConfiguration c
             JOIN reference.wikidata_wfo_link l ON l."ItemId" = n."ItemId" AND l."IsCurrent"
             WHERE (l."AcceptedWfoTaxonId" = p."Id" OR (l."AcceptedWfoTaxonId" IS NULL AND l."WfoTaxonId" = p."Id"))
                 AND (n."Language" = 'en' OR n."Language" LIKE 'en-%')
-            ORDER BY n."Language" <> 'en', NOT (@searchCommon AND n."NormalizedName" LIKE @ncontains ESCAPE '\'),
+            ORDER BY n."Language" <> 'en', NOT (@searchCommon AND (n."NormalizedName" LIKE @ncontains ESCAPE '\'
+                    OR (@searchCompact AND n."CompactName" LIKE @ccontains ESCAPE '\'))),
                 length(n."Name"), n."Name" COLLATE "C"
             LIMIT 1
         ) c ON true
