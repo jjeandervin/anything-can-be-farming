@@ -1,0 +1,9 @@
+.backdrop { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; padding: 16px; background: rgb(20 28 22 / .72); }
+.viewer { width: min(100%, 720px); max-height: 100%; overflow: auto; padding: 12px 16px 16px; background: #fffefa; border-radius: 16px; }
+.top { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+h2 { margin: 0; font-size: 1rem; }
+.close { min-width: 44px; min-height: 44px; background: transparent; border: 1px solid #c9d0c4; border-radius: 8px; color: #25372a; font: inherit; font-size: 1.1rem; cursor: pointer; }
+img { display: block; width: 100%; max-height: 70vh; object-fit: contain; margin: 10px 0; background: #ecece3; border-radius: 8px; }
+.credit { margin: 0 0 8px; font-size: .85rem; color: #60675c; overflow-wrap: anywhere; }
+a { display: inline-flex; align-items: center; min-height: 44px; color: #31583b; font-weight: 600; }
+a:focus-visible, .close:focus-visible { outline: 3px solid #92b394; outline-offset: 2px; }

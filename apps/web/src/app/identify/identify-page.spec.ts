@@ -5,7 +5,7 @@ import { Subject } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AuthService } from '../auth.service';
 import { IMAGE_PREPARER, ImagePrepError } from './image-prep';
-import { IdentifyResponse, PhotoToIdentify } from './identify.models';
+import { IdentifyResponse, IdentifyResult, PhotoToIdentify } from './identify.models';
 import { IdentifyService } from './identify.service';
 import { IdentifyPage } from './identify-page';
 
@@ -257,5 +257,102 @@ describe('IdentifyPage', () => {
     await settle();
     expect(cards()).toHaveLength(1);
     expect(element.querySelector('select')?.disabled).toBe(false);
+  });
+
+  describe('results', () => {
+    const match = (overrides: Partial<IdentifyResult> = {}): IdentifyResult => ({
+      score: 0.8123, scientificName: 'Acer palmatum Thunb.', scientificNameWithoutAuthor: 'Acer palmatum',
+      authorship: 'Thunb.', genus: 'Acer', family: 'Sapindaceae',
+      commonNames: ['Japanese maple', 'Smooth Japanese maple'], gbifId: 3189846, powoId: '783213-1',
+      referenceImages: [
+        reference('Jane Doe', 'cc-by-sa'), reference('Jane Doe', 'cc-by-sa'), reference('Sam Roe', 'cc-by'),
+      ],
+      ...overrides,
+    });
+    const reference = (author: string, license: string) => ({
+      organ: 'leaf', thumbnailUrl: 'https://bs.plantnet.org/s/1', imageUrl: 'https://bs.plantnet.org/m/1',
+      fullUrl: 'https://bs.plantnet.org/o/1', author, license, citation: `${author} / Pl@ntNet, ${license}`,
+    });
+
+    async function showResults(response: Partial<IdentifyResponse>, organs: string[] = ['auto']) {
+      await render();
+      await choose(...organs.map((_, i) => photo(`${i}.jpg`)));
+      element.querySelectorAll('select').forEach((select, i) => {
+        select.value = organs[i];
+        select.dispatchEvent(new Event('change'));
+      });
+      await submit();
+      responses.next({ bestMatch: null, remainingRequests: null, predictedOrgans: [], results: [], ...response });
+      await settle();
+    }
+
+    const resultCards = () => [...element.querySelectorAll('app-identify-results .card')];
+
+    it('renders every result in order with its percentage, names, and credits', async () => {
+      await showResults({
+        remainingRequests: 487,
+        results: [
+          match(),
+          match({ score: 0.0912, scientificName: 'Acer rubrum L.', scientificNameWithoutAuthor: 'Acer rubrum',
+            authorship: 'L.', commonNames: [], referenceImages: [] }),
+          match({ score: 0.004, commonNames: ['Tiny'], referenceImages: [] }),
+        ],
+      });
+      const [first, second, third] = resultCards();
+      expect(resultCards()).toHaveLength(3);
+
+      expect(first.querySelector('.rank')?.textContent).toBe('#1');
+      expect(first.querySelector('.percent')?.textContent).toBe('81%');
+      expect((first.querySelector('.bar span') as HTMLElement).style.width).toBe('81.23%');
+      expect(first.querySelector('h2')?.textContent?.trim()).toBe('Japanese maple');
+      expect(first.querySelector('.subtitle i')?.textContent).toBe('Acer palmatum');
+      expect(first.querySelector('.subtitle')?.textContent?.replace(/\s+/g, ' ').trim()).toBe('Acer palmatum Thunb.');
+      expect(first.querySelector('.meta')?.textContent?.trim()).toBe('Family Sapindaceae · Genus Acer');
+      expect(first.querySelector('.also')?.textContent?.replace(/\s+/g, ' ').trim())
+        .toBe('Also called: Smooth Japanese maple');
+      expect(first.querySelectorAll('.refs img')).toHaveLength(3);
+      expect(first.querySelector('.credits')?.textContent).toBe('Photos: Jane Doe (cc-by-sa); Sam Roe (cc-by)');
+
+      // No common name: the scientific name is the title and the subtitle is only the authorship.
+      expect(second.querySelector('.percent')?.textContent).toBe('9%');
+      expect(second.querySelector('h2')?.textContent?.trim()).toBe('Acer rubrum');
+      expect(second.querySelector('.subtitle i')).toBeNull();
+      expect(second.querySelector('.subtitle')?.textContent?.trim()).toBe('L.');
+      expect(second.classList).toContain('muted');
+      expect(first.classList).not.toContain('muted');
+      expect(third.querySelector('.percent')?.textContent).toBe('0%');
+
+      expect(text()).toContain('Identification by Pl@ntNet');
+      expect(text()).toContain('487 identifications left today');
+      expect(element.querySelector('.banner')).toBeNull();
+    });
+
+    it('warns when the top match has low confidence', async () => {
+      await showResults({ results: [match({ score: 0.19 })] });
+      expect(element.querySelector('.banner')?.textContent).toContain(
+        'Low confidence. More photos from different angles, especially a flower or leaf close-up, usually help.');
+    });
+
+    it('shows the no-match message for empty results', async () => {
+      await showResults({ results: [] });
+      expect(resultCards()).toHaveLength(0);
+      expect(text()).toContain('No match found. Try a closer, sharper photo of a leaf or flower, or add another angle.');
+      expect(element.querySelector('.banner')).toBeNull();
+      expect(text()).not.toContain('identifications left today');
+    });
+
+    it('keeps a compact photo strip showing what Pl@ntNet saw for Auto photos', async () => {
+      await showResults({
+        results: [match()],
+        predictedOrgans: [
+          { imageIndex: 0, organ: 'leaf', score: 0.93 },
+          { imageIndex: 1, organ: 'fruit', score: 0.9 },
+        ],
+      }, ['auto', 'flower']);
+      const strip = [...element.querySelectorAll('.strip li')]
+        .map(li => [...li.querySelectorAll('span')].map(span => span.textContent?.trim()));
+      expect(strip).toEqual([['Auto', 'Pl@ntNet saw: Leaf (93%)'], ['Flower']]);
+      expect(element.querySelectorAll('.strip img')).toHaveLength(2);
+    });
   });
 });

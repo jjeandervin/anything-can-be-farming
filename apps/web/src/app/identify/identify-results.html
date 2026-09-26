@@ -1,0 +1,66 @@
+@if (lowConfidence()) {
+  <p class="banner" role="note">
+    Low confidence. More photos from different angles, especially a flower or leaf close-up, usually help.
+  </p>
+}
+
+@if (cards().length === 0) {
+  <p class="empty">No match found. Try a closer, sharper photo of a leaf or flower, or add another angle.</p>
+} @else {
+  <ol class="cards" aria-label="Possible matches">
+    @for (card of cards(); track card.rank) {
+      <li class="card" [class.muted]="card.muted">
+        <div class="score">
+          <span class="rank">#{{ card.rank }}</span>
+          <span class="percent">{{ card.percent }}%</span>
+        </div>
+        <div class="bar" aria-hidden="true"><span [style.width.%]="card.barWidth"></span></div>
+        <h2>{{ card.title }}</h2>
+        @if (card.italicName || card.authorship) {
+          <p class="subtitle">
+            @if (card.italicName) { <i>{{ card.italicName }}</i> }
+            {{ card.authorship }}
+          </p>
+        }
+        @if (card.taxonomy) { <p class="meta">{{ card.taxonomy }}</p> }
+        @if (card.otherNames.length) {
+          <p class="meta also">
+            Also called:
+            @if (expanded().has(card.rank) || card.otherNames.length <= namesShown) {
+              {{ card.otherNames.join(', ') }}
+            } @else {
+              {{ card.otherNames.slice(0, namesShown).join(', ') }}
+              <button type="button" class="more" (click)="expand(card.rank)">
+                +{{ card.otherNames.length - namesShown }} more
+              </button>
+            }
+          </p>
+        }
+        @if (card.images.length) {
+          <ul class="refs" [attr.aria-label]="'Reference photos of ' + card.title">
+            @for (image of card.images; track $index) {
+              <li>
+                <button type="button" class="ref" (click)="open(image, $any($event.currentTarget))">
+                  <img [src]="image.thumbnailUrl" [alt]="image.alt" loading="lazy" referrerpolicy="no-referrer"
+                       width="96" height="96" />
+                </button>
+              </li>
+            }
+          </ul>
+          @if (card.credits) { <p class="credits">{{ card.credits }}</p> }
+        }
+      </li>
+    }
+  </ol>
+}
+
+<footer>
+  <p>Identification by Pl@ntNet</p>
+  @if (result().remainingRequests !== null) {
+    <p>{{ result().remainingRequests }} identifications left today</p>
+  }
+</footer>
+
+@if (viewing(); as image) {
+  <app-reference-viewer [image]="image" (closed)="close()" />
+}

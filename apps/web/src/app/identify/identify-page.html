@@ -9,13 +9,22 @@
     <button type="button" class="primary" (click)="auth.signIn()">Sign in</button>
   </section>
 } @else if (status() === 'results' && result()) {
-  <section class="results" aria-label="Identification results">
-    <p>{{ result()!.results.length }} possible matches</p>
-    <div class="row">
-      <button type="button" class="secondary" (click)="editPhotos()">Edit photos</button>
-      <button type="button" class="secondary" (click)="startOver()">Start over</button>
-    </div>
-  </section>
+  <ul class="strip" aria-label="Your photos">
+    @for (photo of photos(); track photo.id; let i = $index) {
+      <li>
+        <img [src]="photo.previewUrl" [alt]="'Photo ' + (i + 1)" />
+        <span>{{ shortLabel(photo.organ) }}</span>
+        @if (photo.organ === 'auto' && predictedOrgans().get(i); as prediction) {
+          <span class="saw">{{ sawLabel(prediction) }}</span>
+        }
+      </li>
+    }
+  </ul>
+  <div class="row">
+    <button type="button" class="secondary" (click)="editPhotos()">Edit photos</button>
+    <button type="button" class="secondary" (click)="startOver()">Start over</button>
+  </div>
+  <app-identify-results [result]="result()!" />
 } @else {
   <p class="intro">Photograph one plant, up to {{ maxPhotos }} times. Say what each photo shows, or leave it on Auto.</p>
 

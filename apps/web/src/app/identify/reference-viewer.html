@@ -1,0 +1,13 @@
+<div class="backdrop" (click)="backdrop($event)">
+  <div class="viewer" role="dialog" aria-modal="true" aria-labelledby="viewer-title">
+    <div class="top">
+      <h2 id="viewer-title">{{ image().organ ?? 'Reference photo' }}</h2>
+      <button #close type="button" class="close" aria-label="Close" (click)="closed.emit()">✕</button>
+    </div>
+    <img [src]="image().imageUrl" [alt]="image().alt" referrerpolicy="no-referrer" />
+    @if (image().credit) { <p class="credit">{{ image().credit }}</p> }
+    @if (image().fullUrl) {
+      <a [href]="image().fullUrl" target="_blank" rel="noopener noreferrer">Open full size</a>
+    }
+  </div>
+</div>

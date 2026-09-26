@@ -3,9 +3,10 @@ import { Component, DestroyRef, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { AuthService } from '../auth.service';
 import { IMAGE_PREPARER, ImagePrepError } from './image-prep';
-import { IdentifyApiError, IdentifyResponse, PhotoEntry } from './identify.models';
+import { IdentifyApiError, IdentifyResponse, PhotoEntry, PredictedOrgan } from './identify.models';
+import { IdentifyResults, percent } from './identify-results';
 import { IdentifyService } from './identify.service';
-import { DEFAULT_ORGAN, PLANT_ORGAN_GROUPS, PlantOrgan } from './plant-organ';
+import { DEFAULT_ORGAN, PLANT_ORGAN_GROUPS, PlantOrgan, organLabel } from './plant-organ';
 
 export const MAX_PHOTOS = 5;
 export type IdentifyStatus = 'idle' | 'submitting' | 'results' | 'error';
@@ -14,6 +15,7 @@ const NETWORK_ERROR = "Couldn't reach the server. Check your connection and try 
 
 @Component({
   selector: 'app-identify-page',
+  imports: [IdentifyResults],
   templateUrl: './identify-page.html',
   styleUrl: './identify-page.css',
 })
@@ -39,6 +41,16 @@ export class IdentifyPage {
   readonly canIdentify = computed(() => {
     const photos = this.photos();
     return !this.submitting() && photos.length > 0 && photos.every(photo => photo.file !== null);
+  });
+
+  /** For photos sent as Auto: what Pl@ntNet decided each one shows, by photo index. */
+  readonly predictedOrgans = computed(() => {
+    const byIndex = new Map<number, PredictedOrgan>();
+    for (const prediction of this.result()?.predictedOrgans ?? []) {
+      const best = byIndex.get(prediction.imageIndex);
+      if (!best || prediction.score > best.score) byIndex.set(prediction.imageIndex, prediction);
+    }
+    return byIndex;
   });
 
   private nextId = 1;
@@ -79,6 +91,14 @@ export class IdentifyPage {
     const previewUrl = URL.createObjectURL(prepared);
     this.photos.update(photos => photos.map(photo =>
       photo.id === id ? { ...photo, file: prepared, previewUrl } : photo));
+  }
+
+  shortLabel(organ: PlantOrgan): string {
+    return organ === 'auto' ? 'Auto' : organLabel(organ);
+  }
+
+  sawLabel(prediction: PredictedOrgan): string {
+    return `Pl@ntNet saw: ${organLabel(prediction.organ)} (${percent(prediction.score)}%)`;
   }
 
   setOrgan(id: number, organ: string): void {
