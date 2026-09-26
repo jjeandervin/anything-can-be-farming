@@ -17,4 +17,7 @@
   <ItemGroup>
     <ProjectReference Include="..\AnythingCanBeFarming.Data\AnythingCanBeFarming.Data.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="AnythingCanBeFarming.Api.Tests" />
+  </ItemGroup>
 </Project>

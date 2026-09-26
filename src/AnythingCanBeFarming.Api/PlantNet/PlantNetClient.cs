@@ -9,7 +9,7 @@ namespace AnythingCanBeFarming.Api.PlantNet;
 /// <summary>Client for the supplied My Pl@ntNet API v2.2.2 specification.</summary>
 public sealed class PlantNetClient(HttpClient httpClient, IOptions<PlantNetOptions> options)
 {
-    private static readonly HashSet<string> ValidOrgans =
+    internal static readonly HashSet<string> ValidOrgans =
     [
         "auto", "leaf", "flower", "fruit", "bark", "habit", "scan", "branch", "sheet",
         "other", "drawing", "seed", "bud", "anatomy", "aerial"
