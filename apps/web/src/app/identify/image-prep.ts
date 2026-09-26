@@ -1,3 +1,5 @@
+import { InjectionToken } from '@angular/core';
+
 export const MAX_EDGE = 1600;
 export const JPEG_QUALITY = 0.85;
 const UNSUPPORTED = "This photo format isn't supported here. Try a JPEG or PNG.";
@@ -71,3 +73,9 @@ function checkJpeg(blob: Blob | null): Blob {
   if (!blob || blob.type !== 'image/jpeg') throw new ImagePrepError(UNSUPPORTED);
   return blob;
 }
+
+/** Injectable seam so the page can be tested without real image decoding. */
+export const IMAGE_PREPARER = new InjectionToken<(file: File) => Promise<File>>('image preparer', {
+  providedIn: 'root',
+  factory: () => prepareImage,
+});

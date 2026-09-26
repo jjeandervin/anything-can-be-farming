@@ -1,0 +1,78 @@
+<h1>Identify a plant</h1>
+
+@if (!auth.ready()) {
+  <p class="muted" role="status">Checking sign-in…</p>
+} @else if (!auth.authenticated()) {
+  <section class="panel signed-out">
+    <p>Sign in to identify plants</p>
+    @if (auth.error()) { <p class="error" role="alert">{{ auth.error() }}</p> }
+    <button type="button" class="primary" (click)="auth.signIn()">Sign in</button>
+  </section>
+} @else if (status() === 'results' && result()) {
+  <section class="results" aria-label="Identification results">
+    <p>{{ result()!.results.length }} possible matches</p>
+    <div class="row">
+      <button type="button" class="secondary" (click)="editPhotos()">Edit photos</button>
+      <button type="button" class="secondary" (click)="startOver()">Start over</button>
+    </div>
+  </section>
+} @else {
+  <p class="intro">Photograph one plant, up to {{ maxPhotos }} times. Say what each photo shows, or leave it on Auto.</p>
+
+  @if (photos().length) {
+    <ul class="photos" aria-label="Photos">
+      @for (photo of photos(); track photo.id; let i = $index) {
+        <li class="card">
+          <div class="thumb">
+            @if (photo.previewUrl) {
+              <img [src]="photo.previewUrl" [alt]="'Photo ' + (i + 1)" />
+            } @else {
+              <span class="spinner" role="status" [attr.aria-label]="'Preparing photo ' + (i + 1)"></span>
+            }
+          </div>
+          <label [for]="'organ-' + photo.id">Photo {{ i + 1 }} shows</label>
+          <select [id]="'organ-' + photo.id" [disabled]="submitting()"
+                  (change)="setOrgan(photo.id, $any($event.target).value)">
+            @for (group of organGroups; track group.label) {
+              <optgroup [label]="group.label">
+                @for (organ of group.organs; track organ.value) {
+                  <option [value]="organ.value" [selected]="organ.value === photo.organ">{{ organ.label }}</option>
+                }
+              </optgroup>
+            }
+          </select>
+          <button type="button" class="secondary" [disabled]="submitting()"
+                  [attr.aria-label]="'Remove photo ' + (i + 1)" (click)="remove(photo.id)">Remove</button>
+        </li>
+      }
+    </ul>
+  }
+
+  @if (photos().length < maxPhotos) {
+    <div class="row">
+      <button type="button" class="secondary" [disabled]="!canAdd()" (click)="camera.click()">Add photo</button>
+      <button type="button" class="secondary" [disabled]="!canAdd()" (click)="library.click()">Choose from library</button>
+    </div>
+    <input #camera type="file" hidden capture="environment"
+           accept="image/jpeg,image/png,image/heic,image/heif,image/*" (change)="addFiles(camera)" />
+    <input #library type="file" hidden multiple
+           accept="image/jpeg,image/png,image/heic,image/heif,image/*" (change)="addFiles(library)" />
+  } @else {
+    <p class="muted">{{ maxPhotos }} of {{ maxPhotos }} photos added.</p>
+  }
+
+  @if (notice()) { <p class="notice" role="status">{{ notice() }}</p> }
+
+  @if (status() === 'error' && errorMessage()) {
+    <div class="error" role="alert">
+      <p>{{ errorMessage() }}</p>
+      @if (sessionExpired()) {
+        <button type="button" class="secondary" (click)="auth.signIn()">Sign in again</button>
+      }
+    </div>
+  }
+
+  <button type="button" class="primary identify" [disabled]="!canIdentify()" (click)="identify()">
+    {{ submitting() ? 'Identifying…' : 'Identify' }}
+  </button>
+}
