@@ -1,0 +1,50 @@
+namespace AnythingCanBeFarming.Data;
+
+// Reference data only. Wikidata strings are untrusted source text; never render them as HTML.
+public sealed class WikidataItem
+{
+    public long Id { get; set; }
+    public required string Qid { get; set; }
+    public string? TaxonName { get; set; }
+    public string? TaxonRankQid { get; set; }
+    public string? LabelEn { get; set; }
+    public string? EnwikiTitle { get; set; }
+    public string? ImageFile { get; set; }
+    public long? LastRevId { get; set; }
+    public DateTimeOffset? DetailsFetchedAt { get; set; }
+    public bool IsCurrent { get; set; }
+    public long? CrosswalkImportId { get; set; }
+    public long? DetailsImportId { get; set; }
+}
+
+public sealed class WikidataWfoLink
+{
+    public long Id { get; set; }
+    public long ItemId { get; set; }
+    public required string Qid { get; set; }
+    public required string WfoId { get; set; }
+    public required string StatementRank { get; set; }
+    public string? ResolvedWfoId { get; set; }
+    public long? WfoTaxonId { get; set; }
+    public long? AcceptedWfoTaxonId { get; set; }
+    public required string ResolutionStatus { get; set; }
+    public bool IsCurrent { get; set; }
+    public long ImportId { get; set; }
+}
+
+public sealed class WikidataExternalId
+{
+    public long Id { get; set; }
+    public long ItemId { get; set; }
+    public required string Property { get; set; }
+    public required string Value { get; set; }
+}
+
+public sealed class WikidataCommonName
+{
+    public long Id { get; set; }
+    public long ItemId { get; set; }
+    public required string Language { get; set; }
+    public required string Name { get; set; }
+    public required string NormalizedName { get; set; }
+}

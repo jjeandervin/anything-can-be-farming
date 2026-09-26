@@ -9,9 +9,16 @@ public sealed class AcbfDbContext(DbContextOptions<AcbfDbContext> options) : DbC
     public DbSet<WfoIpniMapping> WfoIpniMappings => Set<WfoIpniMapping>();
     public DbSet<WfoDeprecatedName> WfoDeprecatedNames => Set<WfoDeprecatedName>();
     public DbSet<WfoDeduplicatedId> WfoDeduplicatedIds => Set<WfoDeduplicatedId>();
+    public DbSet<SourceImport> SourceImports => Set<SourceImport>();
+    public DbSet<WikidataItem> WikidataItems => Set<WikidataItem>();
+    public DbSet<WikidataWfoLink> WikidataWfoLinks => Set<WikidataWfoLink>();
+    public DbSet<WikidataExternalId> WikidataExternalIds => Set<WikidataExternalId>();
+    public DbSet<WikidataCommonName> WikidataCommonNames => Set<WikidataCommonName>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        modelBuilder.HasPostgresExtension("pg_trgm");
+
         var imports = modelBuilder.Entity<WfoImport>();
         imports.ToTable("wfo_import", "reference");
         imports.HasKey(x => x.Id);
@@ -65,5 +72,49 @@ public sealed class AcbfDbContext(DbContextOptions<AcbfDbContext> options) : DbC
         taxon.HasOne(x => x.Parent).WithMany().HasForeignKey(x => x.ParentId).OnDelete(DeleteBehavior.Restrict);
         taxon.HasOne(x => x.AcceptedTaxon).WithMany().HasForeignKey(x => x.AcceptedTaxonId).OnDelete(DeleteBehavior.Restrict);
         taxon.HasOne(x => x.OriginalTaxon).WithMany().HasForeignKey(x => x.OriginalTaxonId).OnDelete(DeleteBehavior.Restrict);
+        taxon.HasIndex(x => x.ScientificName, "IX_wfo_taxon_ScientificName_trgm").HasMethod("gin").HasOperators("gin_trgm_ops");
+        taxon.HasIndex(x => x.Genus, "IX_wfo_taxon_Genus_trgm").HasMethod("gin").HasOperators("gin_trgm_ops");
+
+        var sourceImports = modelBuilder.Entity<SourceImport>();
+        sourceImports.ToTable("source_import", "reference");
+        sourceImports.Property(x => x.Id).UseIdentityByDefaultColumn();
+        sourceImports.Property(x => x.ParametersJson).HasColumnType("jsonb");
+        sourceImports.Property(x => x.ValidationJson).HasColumnType("jsonb");
+        sourceImports.HasIndex(x => new { x.Source, x.Kind, x.Status });
+
+        var items = modelBuilder.Entity<WikidataItem>();
+        items.ToTable("wikidata_item", "reference");
+        items.Property(x => x.Id).UseIdentityByDefaultColumn();
+        items.HasIndex(x => x.Qid).IsUnique();
+        items.HasIndex(x => x.IsCurrent);
+        items.HasOne<SourceImport>().WithMany().HasForeignKey(x => x.CrosswalkImportId).OnDelete(DeleteBehavior.Restrict);
+        items.HasOne<SourceImport>().WithMany().HasForeignKey(x => x.DetailsImportId).OnDelete(DeleteBehavior.Restrict);
+
+        var links = modelBuilder.Entity<WikidataWfoLink>();
+        links.ToTable("wikidata_wfo_link", "reference");
+        links.Property(x => x.Id).UseIdentityByDefaultColumn();
+        links.HasIndex(x => new { x.Qid, x.WfoId }).IsUnique();
+        links.HasIndex(x => x.WfoId);
+        links.HasIndex(x => x.WfoTaxonId);
+        links.HasIndex(x => x.AcceptedWfoTaxonId);
+        links.HasOne<WikidataItem>().WithMany().HasForeignKey(x => x.ItemId).OnDelete(DeleteBehavior.Restrict);
+        links.HasOne<WfoTaxon>().WithMany().HasForeignKey(x => x.WfoTaxonId).OnDelete(DeleteBehavior.Restrict);
+        links.HasOne<WfoTaxon>().WithMany().HasForeignKey(x => x.AcceptedWfoTaxonId).OnDelete(DeleteBehavior.Restrict);
+        links.HasOne<SourceImport>().WithMany().HasForeignKey(x => x.ImportId).OnDelete(DeleteBehavior.Restrict);
+
+        var externalIds = modelBuilder.Entity<WikidataExternalId>();
+        externalIds.ToTable("wikidata_external_id", "reference");
+        externalIds.Property(x => x.Id).UseIdentityByDefaultColumn();
+        externalIds.HasIndex(x => new { x.ItemId, x.Property, x.Value }).IsUnique();
+        externalIds.HasIndex(x => new { x.Property, x.Value });
+        externalIds.HasOne<WikidataItem>().WithMany().HasForeignKey(x => x.ItemId).OnDelete(DeleteBehavior.Restrict);
+
+        var commonNames = modelBuilder.Entity<WikidataCommonName>();
+        commonNames.ToTable("wikidata_common_name", "reference");
+        commonNames.Property(x => x.Id).UseIdentityByDefaultColumn();
+        commonNames.HasIndex(x => new { x.ItemId, x.Language, x.Name }).IsUnique();
+        commonNames.HasIndex(x => x.NormalizedName, "IX_wikidata_common_name_NormalizedName_trgm")
+            .HasMethod("gin").HasOperators("gin_trgm_ops");
+        commonNames.HasOne<WikidataItem>().WithMany().HasForeignKey(x => x.ItemId).OnDelete(DeleteBehavior.Restrict);
     }
 }

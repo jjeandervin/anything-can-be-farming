@@ -94,12 +94,16 @@ public sealed class InfrastructureTests
     }
 
     [Fact]
-    public void Database_model_contains_only_WFO_reference_entities()
+    public void Database_model_contains_only_reference_entities()
     {
         using var factory = new ApiFactory();
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AcbfDbContext>();
-        Assert.Equal(new[] { typeof(WfoDeduplicatedId), typeof(WfoDeprecatedName), typeof(WfoImport), typeof(WfoIpniMapping), typeof(WfoTaxon) },
+        Assert.Equal(new[]
+            {
+                typeof(SourceImport), typeof(WfoDeduplicatedId), typeof(WfoDeprecatedName), typeof(WfoImport), typeof(WfoIpniMapping),
+                typeof(WfoTaxon), typeof(WikidataCommonName), typeof(WikidataExternalId), typeof(WikidataItem), typeof(WikidataWfoLink)
+            },
             db.Model.GetEntityTypes().Select(x => x.ClrType).OrderBy(x => x.Name));
     }
 
