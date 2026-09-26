@@ -96,11 +96,72 @@ internal sealed partial class FakeWikidata
         writer.WriteEndObject();
     }
 
+    public sealed class Entity
+    {
+        public long Revision { get; set; }
+        public string? Label { get; set; }
+        public string? Enwiki { get; set; }
+        public List<(string Property, object Claim)> Claims { get; } = [];
+    }
+
+    public Dictionary<string, Entity> Entities { get; } = [];
+    public Dictionary<string, string> Redirects { get; } = [];
+    public List<(bool InfoOnly, string[] Ids)> EntityRequests { get; } = [];
+    // Returns a replacement response for a full-entity request (for example, to simulate a crash).
+    public Func<int, HttpResponseMessage?>? FullRequestOverride { get; set; }
+
+    public Entity AddEntity(string qid, long revision, string? label = null, string? enwiki = null, params (string, object)[] claims)
+    {
+        var entity = new Entity { Revision = revision, Label = label, Enwiki = enwiki };
+        entity.Claims.AddRange(claims);
+        Entities[qid] = entity;
+        return entity;
+    }
+
+    public static object Text(string text, string language, string rank = "normal") =>
+        Statement(new { text, language }, "monolingualtext", rank);
+    public static object Value(string value, string rank = "normal") => Statement(value, "string", rank);
+    public static object Item(string qid, string rank = "normal") =>
+        Statement(new Dictionary<string, object> { ["entity-type"] = "item", ["numeric-id"] = long.Parse(qid[1..]), ["id"] = qid }, "wikibase-entityid", rank);
+    public static object NoValue(string rank = "normal") => new { mainsnak = new { snaktype = "novalue" }, type = "statement", rank };
+    private static object Statement(object value, string type, string rank) =>
+        new { mainsnak = new { snaktype = "value", datavalue = new { value, type } }, type = "statement", rank };
+
     private HttpResponseMessage Api(Dictionary<string, Microsoft.Extensions.Primitives.StringValues> query)
     {
-        if (query["action"] != "wbgetentities" || query["props"] != "datatype") return new HttpResponseMessage(HttpStatusCode.BadRequest);
-        var entities = query["ids"].ToString().Split('|').ToDictionary(id => id, id => (object)(Datatypes.TryGetValue(id, out var datatype)
-            ? new { type = "property", id, datatype } : new { id, missing = "" }));
+        if (query["action"] != "wbgetentities") return new HttpResponseMessage(HttpStatusCode.BadRequest);
+        var ids = query["ids"].ToString().Split('|');
+        if (query["props"] == "datatype")
+            return Json(new
+            {
+                entities = ids.ToDictionary(id => id, id => (object)(Datatypes.TryGetValue(id, out var datatype)
+                    ? new { type = "property", id, datatype } : new { id, missing = "" })),
+                success = 1
+            });
+        var infoOnly = query["props"] == "info";
+        if (!infoOnly && (query["props"] != "info|labels|claims|sitelinks" || query["languages"] != "en" || query["sitefilter"] != "enwiki"))
+            return new HttpResponseMessage(HttpStatusCode.BadRequest);
+        lock (EntityRequests) EntityRequests.Add((infoOnly, ids));
+        if (!infoOnly && FullRequestOverride?.Invoke(EntityRequests.Count(x => !x.InfoOnly)) is { } replacement) return replacement;
+        var entities = new Dictionary<string, object>();
+        foreach (var id in ids)
+        {
+            var target = Redirects.GetValueOrDefault(id, id);
+            if (!Entities.TryGetValue(target, out var entity))
+            {
+                entities[id] = new { id, missing = "" };
+                continue;
+            }
+            var result = new Dictionary<string, object> { ["type"] = "item", ["id"] = target, ["lastrevid"] = entity.Revision };
+            if (target != id) result["redirects"] = new { from = id, to = target };
+            if (!infoOnly)
+            {
+                result["labels"] = entity.Label == null ? new { } : new { en = new { language = "en", value = entity.Label } };
+                result["sitelinks"] = entity.Enwiki == null ? new { } : new { enwiki = new { site = "enwiki", title = entity.Enwiki, badges = Array.Empty<string>() } };
+                result["claims"] = entity.Claims.GroupBy(x => x.Property).ToDictionary(g => g.Key, g => g.Select(x => x.Claim).ToArray());
+            }
+            entities[id] = result;
+        }
         return Json(new { entities, success = 1 });
     }
 

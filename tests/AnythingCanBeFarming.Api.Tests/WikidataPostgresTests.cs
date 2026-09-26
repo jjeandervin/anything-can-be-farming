@@ -244,6 +244,187 @@ public sealed class WikidataPostgresTests
         Assert.Equal(new CoverageSummary(1, 1, 100), refreshed.Coverage);
     }
 
+    [PostgresFact]
+    public async Task Details_store_item_values_and_an_unchanged_rerun_only_checks_revisions()
+    {
+        await using var database = await WfoPostgresTests.TestDatabase.CreateAsync();
+        var fake = SampleWithEntities();
+        await CrosswalkAsync(database, fake);
+        var first = await DetailsAsync(database, fake);
+        Assert.Equal((3, 3, 3, 0), (first.Report.ItemsChecked, first.Report.ItemsFetched, first.Report.ItemsUpdated, first.Report.ItemsUnchanged));
+        Assert.Equal(4, first.Report.CommonNamesInserted);
+        Assert.Equal(4, first.Report.ExternalIdsInserted);
+        Assert.Equal(0, first.Report.P7715Mismatches);
+        Assert.Equal((3, 3, 2, 1, 1), (first.Report.CurrentItems, first.Report.ItemsWithDetails, first.Report.ItemsWithEnglishCommonName,
+            first.Report.ItemsWithEnwikiTitle, first.Report.ItemsWithImage));
+        Assert.Equal([new ValueCount("en", 2), new ValueCount("en-gb", 1), new ValueCount("fr", 1)], first.Report.CommonNamesByLanguage);
+        Assert.Equal(new Dictionary<string, long> { ["P846"] = 2, ["P961"] = 1, ["P1772"] = 1 }, first.Report.ExternalIdCounts);
+        Assert.All(fake.EntityRequests, x => Assert.False(x.InfoOnly));
+
+        await using (var db = database.Context())
+        {
+            var maple = await db.WikidataItems.SingleAsync(x => x.Qid == "Q1");
+            Assert.Equal(("Acer palmatum", "Q7432", "Acer palmatum", "Acer palmatum", "Best.jpg", 100L),
+                (maple.TaxonName, maple.TaxonRankQid, maple.LabelEn, maple.EnwikiTitle, maple.ImageFile, maple.LastRevId));
+            Assert.Equal(first.ImportId, maple.DetailsImportId);
+            Assert.NotNull(maple.DetailsFetchedAt);
+            var names = await db.WikidataCommonNames.Where(x => x.ItemId == maple.Id).OrderBy(x => x.Language).ThenBy(x => x.Name)
+                .Select(x => new { x.Language, x.Name, x.NormalizedName }).ToListAsync();
+            Assert.Equal([new { Language = "en", Name = "  Japanese  Maple ", NormalizedName = "japanese maple" },
+                new { Language = "en-gb", Name = "Japanese maple", NormalizedName = "japanese maple" },
+                new { Language = "fr", Name = "Érable du Japon", NormalizedName = "erable du japon" }], names);
+            var import = await db.SourceImports.SingleAsync(x => x.Kind == "Details");
+            Assert.Equal(("Succeeded", 3L, 3L, 8L), (import.Status, import.RowsRead, import.RowsUpdated, import.RowsInserted));
+        }
+
+        var before = await RowVersionsAsync(database, includeDetails: true);
+        fake.EntityRequests.Clear();
+        var second = await DetailsAsync(database, fake);
+        Assert.Equal((3, 0, 0, 3), (second.Report.ItemsChecked, second.Report.ItemsFetched, second.Report.ItemsUpdated, second.Report.ItemsUnchanged));
+        Assert.All(fake.EntityRequests, x => Assert.True(x.InfoOnly));
+        Assert.Equal(before, await RowVersionsAsync(database, includeDetails: true));
+
+        fake.EntityRequests.Clear();
+        var full = await DetailsAsync(database, fake, full: true);
+        Assert.Equal((3, 0, 3), (full.Report.ItemsFetched, full.Report.ItemsUpdated, full.Report.ItemsUnchanged));
+        Assert.All(fake.EntityRequests, x => Assert.False(x.InfoOnly));
+        Assert.Equal(before, await RowVersionsAsync(database, includeDetails: true));
+
+        var limited = await DetailsAsync(database, fake, full: true, limit: 2);
+        Assert.Equal(2, limited.Report.ItemsChecked);
+    }
+
+    [PostgresFact]
+    public async Task Details_replace_common_names_and_external_ids_wholesale_per_changed_item()
+    {
+        await using var database = await WfoPostgresTests.TestDatabase.CreateAsync();
+        var fake = SampleWithEntities();
+        await CrosswalkAsync(database, fake);
+        await DetailsAsync(database, fake);
+        var untouched = (await RowVersionsAsync(database, includeDetails: true)).Where(x => x.StartsWith("name:Q2") || x.StartsWith("id:Q2")).ToList();
+
+        var maple = fake.Entities["Q1"];
+        maple.Revision = 101;
+        maple.Claims.RemoveAll(x => x.Property is "P1843" or "P846");
+        maple.Claims.Add(("P1843", FakeWikidata.Text("Japanese maple", "en")));
+        maple.Claims.Add(("P1843", FakeWikidata.Text("Momiji", "ja")));
+        maple.Claims.Add(("P846", FakeWikidata.Value("3189846")));
+        var changed = await DetailsAsync(database, fake);
+        Assert.Equal((1, 2, 3), (changed.Report.ItemsUpdated, changed.Report.ItemsUnchanged, changed.Report.CommonNamesDeleted));
+        Assert.Equal((2, 1, 0), (changed.Report.CommonNamesInserted, changed.Report.ExternalIdsDeleted, changed.Report.ExternalIdsInserted));
+
+        await using var db = database.Context();
+        var id = await db.WikidataItems.Where(x => x.Qid == "Q1").Select(x => x.Id).SingleAsync();
+        Assert.Equal(["en:Japanese maple", "ja:Momiji"], await db.WikidataCommonNames.Where(x => x.ItemId == id)
+            .OrderBy(x => x.Language).Select(x => x.Language + ":" + x.Name).ToListAsync());
+        Assert.Equal(["P846:3189846", "P961:786332-1"], await db.WikidataExternalIds.Where(x => x.ItemId == id)
+            .OrderBy(x => x.Property).Select(x => x.Property + ":" + x.Value).ToListAsync());
+        Assert.Equal(untouched, (await RowVersionsAsync(database, includeDetails: true)).Where(x => x.StartsWith("name:Q2") || x.StartsWith("id:Q2")));
+    }
+
+    [PostgresFact]
+    public async Task Details_interrupted_mid_run_keeps_committed_batches_and_resumes()
+    {
+        await using var database = await WfoPostgresTests.TestDatabase.CreateAsync();
+        var fake = new FakeWikidata();
+        for (var i = 1; i <= 5; i++)
+        {
+            fake.Add($"Q{i}", $"wfo-000000000{i}");
+            fake.AddEntity($"Q{i}", 10 * i, $"Taxon {i}", null, ("P1843", FakeWikidata.Text($"name {i}", "en")),
+                ("P7715", FakeWikidata.Value($"wfo-000000000{i}")));
+        }
+        await CrosswalkAsync(database, fake);
+        fake.FullRequestOverride = count => count == 3 ? new HttpResponseMessage(System.Net.HttpStatusCode.BadRequest) : null;
+
+        var error = await Assert.ThrowsAsync<InvalidDataException>(() => DetailsAsync(database, fake, commitSize: 2));
+        Assert.Contains("HTTP 400", error.Message);
+        await using (var db = database.Context())
+        {
+            Assert.Equal(4, await db.WikidataItems.CountAsync(x => x.DetailsFetchedAt != null));
+            Assert.Equal(4, await db.WikidataCommonNames.CountAsync());
+            var failed = await db.SourceImports.SingleAsync(x => x.Kind == "Details");
+            Assert.Equal(("Failed", 4L), (failed.Status, failed.RowsRead));
+            Assert.DoesNotContain("wikidata.org", failed.ErrorMessage);
+        }
+
+        fake.FullRequestOverride = null;
+        fake.EntityRequests.Clear();
+        var resumed = await DetailsAsync(database, fake, commitSize: 2);
+        Assert.Equal((5, 1, 1, 4), (resumed.Report.ItemsChecked, resumed.Report.ItemsFetched, resumed.Report.ItemsUpdated, resumed.Report.ItemsUnchanged));
+        Assert.Single(fake.EntityRequests, x => !x.InfoOnly);
+        await using (var db = database.Context())
+        {
+            Assert.Equal(5, await db.WikidataCommonNames.CountAsync());
+            Assert.Equal(["Failed", "Succeeded"], await db.SourceImports.Where(x => x.Kind == "Details").OrderBy(x => x.Id)
+                .Select(x => x.Status).ToListAsync());
+        }
+    }
+
+    [PostgresFact]
+    public async Task Details_store_redirects_under_the_target_and_report_missing_items_and_p7715_mismatches()
+    {
+        await using var database = await WfoPostgresTests.TestDatabase.CreateAsync();
+        var fake = SampleWithEntities();
+        await CrosswalkAsync(database, fake);
+        fake.Entities.Remove("Q3");
+        fake.Entities["Q20"] = fake.Entities["Q2"];
+        fake.Entities.Remove("Q2");
+        fake.Redirects["Q2"] = "Q20";
+        fake.Entities["Q1"].Claims.Add(("P7715", FakeWikidata.Value("wfo-0000000009")));
+
+        var result = await DetailsAsync(database, fake);
+        Assert.Equal((1, 1, 1, 1), (result.Report.MissingItems, result.Report.RedirectedItems, result.Report.ItemsInserted, result.Report.ItemsRetired));
+        Assert.Equal(2, result.Report.P7715Mismatches);
+        Assert.Equal(4, result.Report.WarningCount);
+        Assert.Contains(result.Report.Warnings, x => x.Contains("Q3") && x.Contains("missing"));
+        Assert.Contains(result.Report.Warnings, x => x.Contains("Q2 redirects to Q20"));
+
+        await using var db = database.Context();
+        var old = await db.WikidataItems.SingleAsync(x => x.Qid == "Q2");
+        Assert.False(old.IsCurrent);
+        Assert.Null(old.DetailsFetchedAt);
+        var target = await db.WikidataItems.SingleAsync(x => x.Qid == "Q20");
+        Assert.True(target.IsCurrent);
+        Assert.Equal(200, target.LastRevId);
+        Assert.Equal(["red maple"], await db.WikidataCommonNames.Where(x => x.ItemId == target.Id).Select(x => x.Name).ToListAsync());
+        Assert.True(await db.WikidataWfoLinks.Where(x => x.Qid == "Q2").AllAsync(x => x.IsCurrent));
+        Assert.Null((await db.WikidataItems.SingleAsync(x => x.Qid == "Q3")).DetailsFetchedAt);
+    }
+
+    internal static FakeWikidata SampleWithEntities()
+    {
+        var fake = Sample();
+        fake.AddEntity("Q1", 100, "Acer palmatum", "Acer palmatum",
+            ("P225", FakeWikidata.Value("Acer palmatum")),
+            ("P105", FakeWikidata.Item("Q7432")),
+            ("P1843", FakeWikidata.Text("  Japanese  Maple ", "en")),
+            ("P1843", FakeWikidata.Text("Japanese maple", "en-gb")),
+            ("P1843", FakeWikidata.Text("Érable du Japon", "fr")),
+            ("P1843", FakeWikidata.Text("Wrong", "en", "deprecated")),
+            ("P18", FakeWikidata.Value("Second.jpg")),
+            ("P18", FakeWikidata.Value("Best.jpg", "preferred")),
+            ("P846", FakeWikidata.Value("3189846")),
+            ("P846", FakeWikidata.Value("8351233")),
+            ("P961", FakeWikidata.Value("786332-1")),
+            ("P7715", FakeWikidata.Value("wfo-0000000001", "preferred")));
+        fake.AddEntity("Q2", 200, "Acer rubrum", null,
+            ("P1843", FakeWikidata.Text("red maple", "en")),
+            ("P1772", FakeWikidata.Value("ACRU")),
+            ("P7715", FakeWikidata.Value("wfo-0000000002")),
+            ("P7715", FakeWikidata.Value("wfo-0000000003")),
+            ("P18", FakeWikidata.NoValue()));
+        fake.AddEntity("Q3", 300, null, null, ("P7715", FakeWikidata.Value("wfo-0000000001")));
+        return fake;
+    }
+
+    internal static async Task<SourceImportResult<DetailsReport>> DetailsAsync(WfoPostgresTests.TestDatabase database, FakeWikidata fake,
+        bool full = false, int? limit = null, int commitSize = 500)
+    {
+        using var clients = fake.Clients();
+        return await new WikidataDetailsImporter(database.ConnectionString, clients.Api, TextWriter.Null) { CommitSize = commitSize }
+            .ImportAsync(full, limit);
+    }
+
     private static string[] Taxon(string id, string name, string status = "Accepted", string? accepted = null, string rank = "species")
     {
         var row = WfoParserTests.Row(id, name);
@@ -291,13 +472,19 @@ public sealed class WikidataPostgresTests
     }
 
     // xmin changes whenever PostgreSQL rewrites a row, even if the values are identical.
-    private static async Task<List<string>> RowVersionsAsync(WfoPostgresTests.TestDatabase database)
+    private static async Task<List<string>> RowVersionsAsync(WfoPostgresTests.TestDatabase database, bool includeDetails = false)
     {
         await using var connection = new NpgsqlConnection(database.ConnectionString);
         await connection.OpenAsync();
-        await using var command = new NpgsqlCommand("""
+        await using var command = new NpgsqlCommand($"""
             SELECT 'item:' || "Qid" || ':' || xmin::text FROM reference.wikidata_item
             UNION ALL SELECT 'link:' || "Qid" || ':' || "WfoId" || ':' || xmin::text FROM reference.wikidata_wfo_link
+            {(includeDetails ? """
+            UNION ALL SELECT 'name:' || i."Qid" || ':' || n."Language" || ':' || n."Name" || ':' || n.xmin::text
+                FROM reference.wikidata_common_name n JOIN reference.wikidata_item i ON i."Id" = n."ItemId"
+            UNION ALL SELECT 'id:' || i."Qid" || ':' || e."Property" || ':' || e."Value" || ':' || e.xmin::text
+                FROM reference.wikidata_external_id e JOIN reference.wikidata_item i ON i."Id" = e."ItemId"
+            """ : "")}
             ORDER BY 1
             """, connection);
         var rows = new List<string>();

@@ -38,6 +38,21 @@ public sealed partial class WikidataApiClient(WikidataHttp http)
             throw new InvalidDataException($"Wikidata property datatypes changed: {string.Join("; ", problems)}. Nothing was imported.");
     }
 
+    public const int MaximumIdsPerRequest = 50;
+
+    // infoOnly requests just lastrevid (and missing/redirect state) for the incremental check.
+    public async Task<List<WikidataEntity>> GetEntitiesAsync(IReadOnlyCollection<string> qids, bool infoOnly,
+        ICollection<string> warnings, CancellationToken cancellationToken)
+    {
+        if (qids.Count is 0 or > MaximumIdsPerRequest) throw new ArgumentOutOfRangeException(nameof(qids));
+        if (!qids.All(Data.WikidataIdentifier.IsQid)) throw new ArgumentException("Only QIDs can be requested.", nameof(qids));
+        var props = infoOnly ? "info" : "info|labels|claims|sitelinks";
+        using var document = await GetAsync($"action=wbgetentities&ids={Uri.EscapeDataString(string.Join('|', qids))}" +
+            $"&props={Uri.EscapeDataString(props)}{(infoOnly ? "" : "&languages=en&sitefilter=enwiki")}&format=json&maxlag=5",
+            cancellationToken);
+        return WikidataEntityParser.Parse(document.RootElement, warnings);
+    }
+
     // Every Action API call goes through here so maxlag and API errors are handled consistently.
     private Task<JsonDocument> GetAsync(string query, CancellationToken cancellationToken) =>
         http.SendAsync(() => new HttpRequestMessage(HttpMethod.Get, $"{Path}?{query}"), async (response, token) =>

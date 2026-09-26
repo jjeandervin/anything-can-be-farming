@@ -7,6 +7,8 @@ internal static class Program
     private const string Usage = """
         Usage: dotnet run --project src/AnythingCanBeFarming.DataImport -- wfo [backbone|supplemental|all] [--directory <package>] [--file <backbone TSV>] [--version <release>] [--force] [--diagnostics <backbone jsonl>]
                dotnet run --project src/AnythingCanBeFarming.DataImport -- wikidata crosswalk [--allow-shrink]
+               dotnet run --project src/AnythingCanBeFarming.DataImport -- wikidata details [--full] [--limit N]
+               dotnet run --project src/AnythingCanBeFarming.DataImport -- wikidata all [--allow-shrink] [--full] [--limit N]
                dotnet run --project src/AnythingCanBeFarming.DataImport -- wikidata resolve
         """;
 
@@ -24,12 +26,18 @@ internal static class Program
     {
         try
         {
-            var mode = args.Length > 1 ? args[1] : throw new InvalidDataException("Specify a Wikidata command: crosswalk or resolve.");
-            if (mode is not ("crosswalk" or "resolve")) throw new InvalidDataException($"Unknown Wikidata command: {mode}");
-            var allowShrink = false;
-            foreach (var option in args.Skip(2))
+            var mode = args.Length > 1 ? args[1] : throw new InvalidDataException("Specify a Wikidata command: crosswalk, details, all, or resolve.");
+            if (mode is not ("crosswalk" or "details" or "all" or "resolve")) throw new InvalidDataException($"Unknown Wikidata command: {mode}");
+            var (allowShrink, full) = (false, false);
+            int? limit = null;
+            for (var index = 2; index < args.Length; index++)
             {
-                if (option == "--allow-shrink" && mode == "crosswalk") allowShrink = true;
+                var option = args[index];
+                if (option == "--allow-shrink" && mode is ("crosswalk" or "all")) allowShrink = true;
+                else if (option == "--full" && mode is ("details" or "all")) full = true;
+                else if (option == "--limit" && mode is ("details" or "all") && index + 1 < args.Length)
+                    limit = int.TryParse(args[++index], out var value) && value > 0 ? value
+                        : throw new InvalidDataException("--limit must be a positive number.");
                 else throw new InvalidDataException($"Unknown or incomplete option: {option}");
             }
             string? root = null;
@@ -45,8 +53,11 @@ internal static class Program
                 return 0;
             }
             using var clients = new WikidataClients(WikidataOptions.FromConfiguration(settings));
-            await new WikidataCrosswalkImporter(connection, clients.Sparql, clients.Api, Console.Out)
-                .ImportAsync(allowShrink, cancellation.Token);
+            if (mode is "crosswalk" or "all")
+                await new WikidataCrosswalkImporter(connection, clients.Sparql, clients.Api, Console.Out)
+                    .ImportAsync(allowShrink, cancellation.Token);
+            if (mode is "details" or "all")
+                await new WikidataDetailsImporter(connection, clients.Api, Console.Out).ImportAsync(full, limit, cancellation.Token);
             return 0;
         }
         catch (Exception exception)
