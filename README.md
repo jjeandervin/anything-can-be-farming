@@ -127,7 +127,38 @@ var result = await plantNet.IdentifyAsync([image], options: new()
 }, cancellationToken: cancellationToken);
 ```
 
-Identification accepts one to five JPEG/PNG images of the same plant. Omit organs for automatic detection, or supply one per image. POST requests are subject to the API's 50 MiB limit. The deprecated URL-based GET operation is available as `IdentifyUrlsAsync`. Species pagination accepts strings so setting both `Page` and `PageSize` to `""` disables pagination as specified by the API. Non-success responses throw `HttpRequestException` with the HTTP status; calls accept cancellation tokens and do not retry quota-consuming requests automatically.
+Identification accepts one to five JPEG/PNG images of the same plant. Omit organs for automatic detection, or supply one per image. POST requests are subject to the API's 50 MiB limit. The deprecated URL-based GET operation is available as `IdentifyUrlsAsync`. Species pagination accepts strings so setting both `Page` and `PageSize` to `""` disables pagination as specified by the API. Non-success responses throw `HttpRequestException` with the HTTP status; calls accept cancellation tokens and do not retry quota-consuming requests automatically. The registered client times out after 30 seconds.
+
+## Plant identifier
+
+The frontend's **Identify** page (`/identify`, the default route) takes 1–5 photos of one plant, sends them to Pl@ntNet through the API, and lists every match with its confidence, names, and credited reference photos. Nothing is saved. It needs a signed-in user and `PlantNet:ApiKey` (see above).
+
+Photos are prepared in the browser before upload: EXIF rotation is applied, the long edge is limited to 1600 px, and the image is re-encoded as JPEG. This strips EXIF metadata such as GPS coordinates and converts PNG and HEIC to JPEG. If the browser can't decode a photo (for example, HEIC in a browser without HEIC support), the page says the format isn't supported instead of uploading it.
+
+`POST /api/identify` requires a bearer token and takes `multipart/form-data`:
+
+| Field | Value |
+| --- | --- |
+| `images` | 1–5 files, each JPEG or PNG (checked by content, not name or type) and at most 8 MiB |
+| `organs` | One per image, in the same order: `auto`, `leaf`, `flower`, `fruit`, `bark`, `habit`, `branch`, `bud`, `seed`, `other`, `scan`, `sheet`, `drawing`, `anatomy`, or `aerial` |
+
+A successful response contains `bestMatch`, `remainingRequests`, `predictedOrgans` (what Pl@ntNet saw in each `auto` photo, by image index), and `results` (all matches in score order, with names, taxonomy, GBIF/POWO ids, and HTTPS reference images with credits). When Pl@ntNet finds no plant, the response is still **200**, with empty `results`. Errors return `{ "error": "<code>", "message": "<text>" }`:
+
+| Status | `error` |
+| --- | --- |
+| 400 | `no_images`, `too_many_images`, `organ_count_mismatch`, `invalid_organ`, `image_too_large`, `unsupported_image`, `empty_image` |
+| 429 | `quota_exceeded` |
+| 502 | `upstream_rejected` (Pl@ntNet refused the photos) or `upstream_error` (failure, timeout, or bad response) |
+| 503 | `identification_unavailable` (`PlantNet:ApiKey` not set) |
+
+To try it, start the AppHost with the key set, open http://localhost:4200, sign in, and use **Add photo** (camera on phones) or **Choose from library**. To call the API directly, copy an access token from browser Network tools (do not commit or share it):
+
+```sh
+curl -H "Authorization: Bearer <token>" -F images=@leaf.jpg -F organs=leaf \
+  https://localhost:7243/api/identify
+```
+
+Each identification uses one request from the Pl@ntNet daily quota.
 
 ## Keycloak setup — manual only
 
@@ -196,7 +227,7 @@ dotnet build AnythingCanBeFarming.sln
 dotnet test tests/AnythingCanBeFarming.Api.Tests
 ```
 
-API tests exercise the actual JWT bearer handler with locally signed test tokens, including rejection of bad issuer, audience, signature, expiry, and malformed tokens. They also check CORS, anonymous/protected endpoints, health failure responses, and the reference-only EF model. WFO tests cover TSV parsing and optionally real PostgreSQL imports and queries (see below). The remote Keycloak installation is not used or modified by tests. Frontend tests cover session restoration settings, token renewal, sign-in/out, and restricting token attachment to the API.
+API tests exercise the actual JWT bearer handler with locally signed test tokens, including rejection of bad issuer, audience, signature, expiry, and malformed tokens. They also check CORS, anonymous/protected endpoints, health failure responses, and the reference-only EF model. WFO tests cover TSV parsing and optionally real PostgreSQL imports and queries (see below). The remote Keycloak installation is not used or modified by tests. Identify endpoint tests cover validation, magic-byte sniffing, the request sent to a stubbed Pl@ntNet transport, response mapping, and error mapping; a drift test keeps the organ enum in step with the client. Frontend tests cover session restoration settings, token renewal, sign-in/out, restricting token attachment to the API, routing, the status page, image preparation, and the Identify page.
 
 With AppHost running:
 
@@ -210,11 +241,11 @@ Expected: `{"status":"ok"}`, `{"database":"connected"}`, and **401** respectivel
 
 Complete the interactive checks:
 
-1. Open the frontend. API and Database should show **Connected**.
+1. Open the frontend and select **Status**. API and Database should show **Connected**.
 2. Click **Sign in**, authenticate with your existing Keycloak account, and confirm **Signed in as …** and **Protected API: Verified as …**.
 3. In browser Network tools, confirm `/api/auth/me` has an `Authorization: Bearer …` header and returns 200. Do not paste tokens into tickets or committed files.
 4. Reload; the Keycloak SSO session should restore the signed-in state. Click **Sign out** and verify the signed-out state.
-5. Edit the subtitle in `apps/web/src/app/app.html`; confirm an Angular rebuild and browser update without restarting the AppHost.
+5. Edit the subtitle in `apps/web/src/app/status/status-page.html`; confirm an Angular rebuild and browser update without restarting the AppHost.
 6. Hit the C# breakpoint described above while debugging the AppHost.
 
 `AcbfDbContext` is shared by the API and importer through `AnythingCanBeFarming.Data`. It contains only WFO reference entities. Startup and health checks do not call `EnsureCreated`, `Migrate`, or import reference data. Apply migrations explicitly before using reference endpoints; an empty migrated database returns empty search results, zero statistics, and 404 for unknown taxa.
