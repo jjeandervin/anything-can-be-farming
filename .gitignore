@@ -71,6 +71,8 @@ CodeCoverage/
 TestResult.xml
 nunit-*.xml
 
-# Locally staged taxonomy snapshots and import diagnostics
+# Locally staged taxonomy snapshots, trait archives, and import diagnostics
 /data/imports/wfo/**
 !/data/imports/wfo/.gitkeep
+/data/imports/usda/**
+!/data/imports/usda/.gitkeep

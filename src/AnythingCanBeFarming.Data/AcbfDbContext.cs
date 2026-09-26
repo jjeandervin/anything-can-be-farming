@@ -14,6 +14,14 @@ public sealed class AcbfDbContext(DbContextOptions<AcbfDbContext> options) : DbC
     public DbSet<WikidataWfoLink> WikidataWfoLinks => Set<WikidataWfoLink>();
     public DbSet<WikidataExternalId> WikidataExternalIds => Set<WikidataExternalId>();
     public DbSet<WikidataCommonName> WikidataCommonNames => Set<WikidataCommonName>();
+    public DbSet<UsdaTaxon> UsdaTaxa => Set<UsdaTaxon>();
+    public DbSet<UsdaFact> UsdaFacts => Set<UsdaFact>();
+    public DbSet<UsdaRemark> UsdaRemarks => Set<UsdaRemark>();
+    public DbSet<UsdaDistribution> UsdaDistributions => Set<UsdaDistribution>();
+    public DbSet<UsdaWfoLink> UsdaWfoLinks => Set<UsdaWfoLink>();
+    public DbSet<UsdaTraitType> UsdaTraitTypes => Set<UsdaTraitType>();
+    public DbSet<UsdaCodeLabel> UsdaCodeLabels => Set<UsdaCodeLabel>();
+    public DbSet<PlaceLabel> PlaceLabels => Set<PlaceLabel>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -121,5 +129,68 @@ public sealed class AcbfDbContext(DbContextOptions<AcbfDbContext> options) : DbC
         commonNames.HasIndex(x => x.NormalizedName, "IX_wikidata_common_name_NormalizedName_trgm")
             .HasMethod("gin").HasOperators("gin_trgm_ops");
         commonNames.HasOne<WikidataItem>().WithMany().HasForeignKey(x => x.ItemId).OnDelete(DeleteBehavior.Restrict);
+
+        var usdaTaxa = modelBuilder.Entity<UsdaTaxon>();
+        usdaTaxa.ToTable("usda_taxon", "reference");
+        usdaTaxa.Property(x => x.Id).UseIdentityByDefaultColumn();
+        usdaTaxa.HasIndex(x => x.Symbol).IsUnique();
+        usdaTaxa.HasIndex(x => x.CanonicalName);
+        usdaTaxa.HasOne<SourceImport>().WithMany().HasForeignKey(x => x.ImportId).OnDelete(DeleteBehavior.Restrict);
+
+        var remarks = modelBuilder.Entity<UsdaRemark>();
+        remarks.ToTable("usda_remark", "reference");
+        remarks.Property(x => x.Id).UseIdentityByDefaultColumn();
+        remarks.HasIndex(x => x.Sha256).IsUnique();
+
+        var facts = modelBuilder.Entity<UsdaFact>();
+        facts.ToTable("usda_fact", "reference");
+        facts.Property(x => x.Id).UseIdentityByDefaultColumn();
+        facts.Property(x => x.ValueNumeric).HasColumnType("numeric");
+        facts.Property(x => x.ValueCode).HasComputedColumnSql(UsdaCode.ValueCodeSql, stored: true);
+        facts.HasIndex(x => x.Symbol);
+        facts.HasIndex(x => x.TypeUri);
+        facts.HasIndex(x => new { x.TypeUri, x.ValueRaw });
+        facts.HasOne<UsdaTaxon>().WithMany().HasForeignKey(x => x.UsdaTaxonId).OnDelete(DeleteBehavior.Restrict);
+        facts.HasOne<UsdaRemark>().WithMany().HasForeignKey(x => x.RemarkId).OnDelete(DeleteBehavior.Restrict);
+        facts.HasOne<UsdaRemark>().WithMany().HasForeignKey(x => x.MethodRemarkId).OnDelete(DeleteBehavior.Restrict);
+        facts.HasOne<SourceImport>().WithMany().HasForeignKey(x => x.ImportId).OnDelete(DeleteBehavior.Restrict);
+
+        var distribution = modelBuilder.Entity<UsdaDistribution>();
+        distribution.ToTable("usda_distribution", "reference");
+        distribution.Property(x => x.Id).UseIdentityByDefaultColumn();
+        distribution.HasIndex(x => new { x.UsdaTaxonId, x.Kind, x.PlaceRaw }).IsUnique();
+        distribution.HasIndex(x => new { x.Kind, x.PlaceId });
+        distribution.HasIndex(x => x.Symbol);
+        distribution.HasOne<UsdaTaxon>().WithMany().HasForeignKey(x => x.UsdaTaxonId).OnDelete(DeleteBehavior.Restrict);
+        distribution.HasOne<UsdaRemark>().WithMany().HasForeignKey(x => x.RemarkId).OnDelete(DeleteBehavior.Restrict);
+        distribution.HasOne<SourceImport>().WithMany().HasForeignKey(x => x.ImportId).OnDelete(DeleteBehavior.Restrict);
+
+        var usdaLinks = modelBuilder.Entity<UsdaWfoLink>();
+        usdaLinks.ToTable("usda_wfo_link", "reference");
+        usdaLinks.Property(x => x.Id).UseIdentityByDefaultColumn();
+        usdaLinks.Property(x => x.DetailJson).HasColumnType("jsonb");
+        usdaLinks.HasIndex(x => x.UsdaTaxonId).IsUnique();
+        usdaLinks.HasIndex(x => x.Symbol);
+        usdaLinks.HasIndex(x => x.WfoTaxonId);
+        usdaLinks.HasIndex(x => x.AcceptedWfoTaxonId);
+        usdaLinks.HasOne<UsdaTaxon>().WithMany().HasForeignKey(x => x.UsdaTaxonId).OnDelete(DeleteBehavior.Restrict);
+        usdaLinks.HasOne<WfoTaxon>().WithMany().HasForeignKey(x => x.WfoTaxonId).OnDelete(DeleteBehavior.Restrict);
+        usdaLinks.HasOne<WfoTaxon>().WithMany().HasForeignKey(x => x.AcceptedWfoTaxonId).OnDelete(DeleteBehavior.Restrict);
+
+        var traitTypes = modelBuilder.Entity<UsdaTraitType>();
+        traitTypes.ToTable("usda_trait_type", "reference");
+        traitTypes.HasKey(x => x.TypeUri);
+        traitTypes.HasIndex(x => x.Key).IsUnique();
+
+        var codeLabels = modelBuilder.Entity<UsdaCodeLabel>();
+        codeLabels.ToTable("usda_code_label", "reference");
+        codeLabels.Property(x => x.Id).UseIdentityByDefaultColumn();
+        // A generic row (TypeUri null) and a trait-specific override may share a code, but neither may repeat.
+        codeLabels.HasIndex(x => new { x.Code, x.TypeUri }).IsUnique().AreNullsDistinct(false);
+
+        var places = modelBuilder.Entity<PlaceLabel>();
+        places.ToTable("place_label", "reference");
+        places.HasKey(x => new { x.Scheme, x.PlaceId });
+        places.HasIndex(x => new { x.CountryCode, x.AdminCode });
     }
 }

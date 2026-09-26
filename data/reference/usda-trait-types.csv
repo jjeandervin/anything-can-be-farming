@@ -1,0 +1,62 @@
+type_uri,key,label,value_kind,notes
+http://purl.obolibrary.org/obo/TO_0002725,duration,Duration,multi,Annual/biennial/perennial; a taxon can have several.
+http://eol.org/schema/terms/PlantHabit,growth_habit,Growth Habit,multi,A taxon can have several (e.g. ACSA3 is tree and shrub).
+http://purl.obolibrary.org/obo/FLOPO_0900032,growth_habit_flopo,Growth Habit (FLOPO),multi,Redundant coded habit; kept but deliberately not mapped yet.
+http://eol.org/schema/terms/ShadeTolerance,shade_tolerance,Shade Tolerance,coded,Direction unresolved (spec 2.2.1); labels are overridden to unresolved.
+http://purl.obolibrary.org/obo/TO_0000276,drought_tolerance,Drought Tolerance,coded,
+http://eol.org/schema/terms/MoistureUse,moisture_use,Moisture Use,coded,
+http://eol.org/schema/terms/TemperatureTolerance,min_temperature_f,"Temperature, Minimum (°F)",numeric,Unit UO_0000195 (degree Fahrenheit).
+http://purl.obolibrary.org/obo/TO_0000207,height_ft,Height (feet),numeric,"One or two values: mature height and height at base age (20 years), told apart by measurementMethod. Mature height is the larger."
+http://eol.org/schema/terms/BloomPeriod,bloom_period,Bloom Period,coded,
+http://purl.obolibrary.org/obo/TO_0000537,flower_color,Flower Color,coded,
+http://purl.obolibrary.org/obo/TO_0000326,foliage_color,Foliage Color,coded,
+http://eol.org/schema/terms/FruitSeedColor,fruit_seed_color,Fruit/Seed Color,coded,
+http://purl.obolibrary.org/obo/PATO_0001729,leaf_retention,Leaf Retention,coded,Occurrence body part PO_0025034 (leaf).
+http://eol.org/schema/terms/BrowseAnimalPalatability,browse_palatability,Palatable Browse Animal,coded,
+http://eol.org/schema/terms/GrazeAnimalPalatability,graze_palatability,Palatable Graze Animal,coded,
+http://eol.org/schema/terms/HumanLivestockToxicity,toxicity,Toxicity,coded,
+http://purl.bioontology.org/ontology/SNOMEDCT/260865002,growth_rate,Growth Rate,coded,
+http://purl.obolibrary.org/obo/PATO_0000050,lifespan,Lifespan,coded,
+http://purl.obolibrary.org/obo/PATO_0000052,shape_orientation,Shape and Orientation,coded,
+http://sweet.jpl.nasa.gov/2.3/humanAgriculture.owl#Horticulture,horticulture_flags,Horticulture Flags,literal,"Coppice potential and flower, fruit/seed, and fall conspicuousness as Yes/No literals."
+http://eol.org/schema/terms/SoilPH,soil_ph,"pH (minimum and maximum)",numeric,Statistical method SIO_001113 (minimum) or SIO_001114 (maximum).
+http://eol.org/schema/terms/SoilRequirements,soil_texture_flags,Adapted Soil Textures,literal,"Coarse, medium, and fine soil adaptation as Yes/No literals."
+http://eol.org/schema/terms/ThreatenedEndangeredStatus,federal_status,Federal Threatened/Endangered Status,literal,
+http://eol.org/schema/terms/ActiveGrowthPeriod,active_growth_period,Active Growth Period,coded,
+http://eol.org/schema/terms/AfterHarvestRegrowthRate,after_harvest_regrowth_rate,After Harvest Regrowth Rate,coded,
+http://eol.org/schema/terms/AnaerobicSoilTolerance,anaerobic_tolerance,Anaerobic Tolerance,coded,
+http://eol.org/schema/terms/BloatPotential,bloat,Bloat,coded,
+http://eol.org/schema/terms/CNRatio,cn_ratio,C:N Ratio,coded,
+http://eol.org/schema/terms/CalcareousSoilTolerance,caco3_tolerance,CaCO3 Tolerance,coded,
+http://eol.org/schema/terms/CommercialAvailability,commercial_availability,Commercial Availability,coded,
+http://eol.org/schema/terms/FireResistance,fire_resistant,Fire Resistant,literal,
+http://eol.org/schema/terms/FireTolerance,fire_tolerance,Fire Tolerance,coded,
+http://eol.org/schema/terms/FoliagePorositySummer,foliage_porosity_summer,Foliage Porosity Summer,coded,
+http://eol.org/schema/terms/FoliagePorosityWinter,foliage_porosity_winter,Foliage Porosity Winter,coded,
+http://eol.org/schema/terms/FoliageTexture,foliage_texture,Foliage Texture,coded,
+http://eol.org/schema/terms/FrostFreeDays,frost_free_days_min,"Frost Free Days, Minimum",numeric,Unit UO_0000033 (day).
+http://eol.org/schema/terms/FruitPersistence,fruit_seed_persistence,Fruit/Seed Persistence,literal,
+http://eol.org/schema/terms/FuelwoodSuitability,fuelwood_product,Fuelwood Product,coded,
+http://eol.org/schema/terms/GardenPersistent,garden_persistent,Garden Persistent,literal,Values are place names; meaning unclear.
+http://eol.org/schema/terms/GerminationRequirements,cold_stratification_required,Cold Stratification Required,literal,
+http://eol.org/schema/terms/GrainType,small_grain,Small Grain,literal,
+http://eol.org/schema/terms/GrassGrowthType,low_growing_grass,Low Growing Grass,literal,
+http://eol.org/schema/terms/HedgeTolerance,hedge_tolerance,Hedge Tolerance,coded,
+http://eol.org/schema/terms/PlantingDensity,planting_density_per_acre,Planting Density per Acre,numeric,Unit perAcre; SIO_001113 (minimum) or SIO_001114 (maximum).
+http://eol.org/schema/terms/PrecipitationTolerance,precipitation_in,Precipitation (inches),numeric,Unit inch; SIO_001113 (minimum) or SIO_001114 (maximum).
+http://eol.org/schema/terms/PrimaryGrowthForm,growth_form,Growth Form,coded,
+http://eol.org/schema/terms/PrimaryMacronutrientRequirements,fertility_requirement,Fertility Requirement,coded,
+http://eol.org/schema/terms/PropagationMethod,propagation_flags,Propagation Methods,literal,Propagation by bare root/bulb/container/corm/cuttings/seed/sod/sprigs/tubers as Yes/No literals.
+http://eol.org/schema/terms/ProteinPotential,protein_potential,Protein Potential,coded,
+http://eol.org/schema/terms/ResproutAbility,resprout_ability,Resprout Ability,literal,
+http://eol.org/schema/terms/SeedAbundance,fruit_seed_abundance,Fruit/Seed Abundance,coded,
+http://eol.org/schema/terms/SeedPerPound,seeds_per_pound,Seed per Pound,numeric,Statistical method average; no unit.
+http://eol.org/schema/terms/SeedPeriodBegin,fruit_seed_period_begin,Fruit/Seed Period Begin,coded,
+http://eol.org/schema/terms/SeedPeriodEnd,fruit_seed_period_end,Fruit/Seed Period End,coded,
+http://eol.org/schema/terms/SeedSpreadRate,seed_spread_rate,Seed Spread Rate,coded,
+http://eol.org/schema/terms/SeedlingSurvival,seedling_vigor,Seedling Vigor,coded,Occurrence life stage PPO_0001007.
+http://eol.org/schema/terms/SoilDepth,root_depth_min_in,"Root Depth, Minimum (inches)",numeric,Unit inch.
+http://eol.org/schema/terms/VegetativeSpreadRate,vegetative_spread_rate,Vegetative Spread Rate,coded,
+http://purl.obolibrary.org/obo/GO_0009399,nitrogen_fixation,Nitrogen Fixation,coded,
+http://purl.obolibrary.org/obo/TO_0000624,known_allelopath,Known Allelopath,literal,
+http://purl.obolibrary.org/obo/TO_0006001,salinity_tolerance,Salinity Tolerance,coded,

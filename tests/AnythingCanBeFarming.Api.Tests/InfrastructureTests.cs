@@ -101,7 +101,8 @@ public sealed class InfrastructureTests
         var db = scope.ServiceProvider.GetRequiredService<AcbfDbContext>();
         Assert.Equal(new[]
             {
-                typeof(SourceImport), typeof(WfoDeduplicatedId), typeof(WfoDeprecatedName), typeof(WfoImport), typeof(WfoIpniMapping),
+                typeof(PlaceLabel), typeof(SourceImport), typeof(UsdaCodeLabel), typeof(UsdaDistribution), typeof(UsdaFact),
+                typeof(UsdaRemark), typeof(UsdaTaxon), typeof(UsdaTraitType), typeof(UsdaWfoLink), typeof(WfoDeduplicatedId), typeof(WfoDeprecatedName), typeof(WfoImport), typeof(WfoIpniMapping),
                 typeof(WfoTaxon), typeof(WikidataCommonName), typeof(WikidataExternalId), typeof(WikidataItem), typeof(WikidataWfoLink)
             },
             db.Model.GetEntityTypes().Select(x => x.ClrType).OrderBy(x => x.Name));

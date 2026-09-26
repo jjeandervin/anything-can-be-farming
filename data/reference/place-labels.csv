@@ -1,0 +1,76 @@
+scheme,place_id,name,kind,country_code,admin_code
+geonames,3577322,Virgin Islands,region,,
+geonames,6255149,North America,region,,
+geonames,6251999,Canada,country,CA,
+geonames,5883102,Alberta,province,CA,01
+geonames,5909050,British Columbia,province,CA,02
+geonames,6065171,Manitoba,province,CA,03
+geonames,6087430,New Brunswick,province,CA,04
+geonames,6354959,Newfoundland and Labrador,province,CA,05
+geonames,6091530,Nova Scotia,province,CA,07
+geonames,6093943,Ontario,province,CA,08
+geonames,6113358,Prince Edward Island,province,CA,09
+geonames,6115047,Quebec,province,CA,10
+geonames,6141242,Saskatchewan,province,CA,11
+geonames,6185811,Yukon,province,CA,12
+geonames,6091069,Northwest Territories,province,CA,13
+geonames,6091732,Nunavut,province,CA,14
+geonames,614540,Georgia,country,GE,
+geonames,3425505,Greenland,country,GL,
+geonames,3424932,Saint Pierre and Miquelon,country,PM,
+geonames,4566966,Puerto Rico,territory,PR,
+geonames,5854968,United States Minor Outlying Islands,territory,UM,
+geonames,5879092,Alaska,state,US,AK
+geonames,4829764,Alabama,state,US,AL
+geonames,4099753,Arkansas,state,US,AR
+geonames,5551752,Arizona,state,US,AZ
+geonames,5332921,California,state,US,CA
+geonames,5417618,Colorado,state,US,CO
+geonames,4831725,Connecticut,state,US,CT
+geonames,4138106,District of Columbia,state,US,DC
+geonames,4142224,Delaware,state,US,DE
+geonames,4155751,Florida,state,US,FL
+geonames,4197000,Georgia,state,US,GA
+geonames,5855797,Hawaii,state,US,HI
+geonames,4862182,Iowa,state,US,IA
+geonames,5596512,Idaho,state,US,ID
+geonames,4896861,Illinois,state,US,IL
+geonames,4921868,Indiana,state,US,IN
+geonames,4273857,Kansas,state,US,KS
+geonames,6254925,Kentucky,state,US,KY
+geonames,4331987,Louisiana,state,US,LA
+geonames,6254926,Massachusetts,state,US,MA
+geonames,4361885,Maryland,state,US,MD
+geonames,4971068,Maine,state,US,ME
+geonames,5001836,Michigan,state,US,MI
+geonames,5037779,Minnesota,state,US,MN
+geonames,4398678,Missouri,state,US,MO
+geonames,4436296,Mississippi,state,US,MS
+geonames,5667009,Montana,state,US,MT
+geonames,4482348,North Carolina,state,US,NC
+geonames,5690763,North Dakota,state,US,ND
+geonames,5073708,Nebraska,state,US,NE
+geonames,5090174,New Hampshire,state,US,NH
+geonames,5101760,New Jersey,state,US,NJ
+geonames,5481136,New Mexico,state,US,NM
+geonames,5509151,Nevada,state,US,NV
+geonames,5128638,New York,state,US,NY
+geonames,5165418,Ohio,state,US,OH
+geonames,4544379,Oklahoma,state,US,OK
+geonames,5744337,Oregon,state,US,OR
+geonames,6254927,Pennsylvania,state,US,PA
+geonames,5224323,Rhode Island,state,US,RI
+geonames,4597040,South Carolina,state,US,SC
+geonames,5769223,South Dakota,state,US,SD
+geonames,4662168,Tennessee,state,US,TN
+geonames,4736286,Texas,state,US,TX
+geonames,5549030,Utah,state,US,UT
+geonames,6254928,Virginia,state,US,VA
+geonames,5242283,Vermont,state,US,VT
+geonames,5815135,Washington,state,US,WA
+geonames,5279468,Wisconsin,state,US,WI
+geonames,4826850,West Virginia,state,US,WV
+geonames,5843591,Wyoming,state,US,WY
+geonames,4796775,U.S. Virgin Islands,territory,VI,
+wikidata,Q578170,Contiguous United States,region,US,
+wikidata,Q797,Alaska,state,US,AK
