@@ -44,12 +44,13 @@ public sealed class ReferencePlantsController(AcbfDbContext db, IConfiguration c
     // Treat SQL pattern characters in user input as literal text.
     private static string EscapeLike(string value) => value.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_");
 
-    // Genus before species before infraspecific ranks; "notho" (hybrid) ranks sort with their base rank.
+    // Genus before species before infraspecific ranks; "notho" (hybrid) ranks sort with their base rank,
+    // and anything unlisted (WFO "unranked") sorts last.
     private static readonly string RankDepthSql = "CASE regexp_replace(lower(t.\"TaxonRank\"), '^notho', '') " + string.Join(" ", new[]
     {
         "kingdom", "subkingdom", "phylum", "subphylum", "class", "subclass", "superorder", "order", "suborder",
-        "family", "subfamily", "tribe", "subtribe", "genus", "subgenus", "section", "subsection", "series", "subseries",
-        "species", "subspecies", "prole", "variety", "subvariety", "form", "subform", "lusus"
+        "family", "subfamily", "supertribe", "tribe", "subtribe", "genus", "subgenus", "section", "subsection", "series", "subseries",
+        "species", "subspecies", "prole", "convar", "variety", "subvariety", "form", "subform", "lusus"
     }.Select((rank, depth) => $"WHEN '{rank}' THEN {depth}")) + " ELSE 1000 END";
 
     // One row per accepted taxon: synonyms report against their current accepted taxon, common names against the
