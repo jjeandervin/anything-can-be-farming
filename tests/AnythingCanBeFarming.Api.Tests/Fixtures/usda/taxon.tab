@@ -1,0 +1,7 @@
+taxonID	source	scientificName	family	taxonRank	taxonomicStatus
+ACER	https://plants.usda.gov/home/plantProfile?symbol=ACER	Acer L.	Aceraceae	genus	valid
+ACSA3	https://plants.usda.gov/home/plantProfile?symbol=ACSA3	Acer saccharum Marshall	Aceraceae	species	valid
+ACSAS2	https://plants.usda.gov/home/plantProfile?symbol=ACSAS2	Acer saccharum Marshall var. schneckii Rehder	Aceraceae	variety	valid
+COFL2	https://plants.usda.gov/home/plantProfile?symbol=COFL2	Cornus florida L.	Cornaceae	species	valid
+ECPU	https://plants.usda.gov/home/plantProfile?symbol=ECPU	Echinacea purpurea (L.) Moench	Asteraceae	species	valid
+RUHI2	https://plants.usda.gov/home/plantProfile?symbol=RUHI2	Rudbeckia hirta L.	Asteraceae	species	valid

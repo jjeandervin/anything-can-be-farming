@@ -10,16 +10,97 @@ internal static class Program
                dotnet run --project src/AnythingCanBeFarming.DataImport -- wikidata details [--full] [--limit N]
                dotnet run --project src/AnythingCanBeFarming.DataImport -- wikidata all [--allow-shrink] [--full] [--limit N]
                dotnet run --project src/AnythingCanBeFarming.DataImport -- wikidata resolve
+               dotnet run --project src/AnythingCanBeFarming.DataImport -- usda [--directory <archive>] [--force] [--version 8] [--zenodo-record 18945513] [--diagnostics <jsonl>]
+               dotnet run --project src/AnythingCanBeFarming.DataImport -- usda link
+               dotnet run --project src/AnythingCanBeFarming.DataImport -- usda verify [--sample 20] [--symbols ACSA3,COFL2,...] [--seed 42]
         """;
 
     public static async Task<int> Main(string[] args)
     {
-        if (args.Length == 0 || args[0] is not ("wfo" or "wikidata") || args.Contains("--help"))
+        if (args.Length == 0 || args[0] is not ("wfo" or "wikidata" or "usda") || args.Contains("--help"))
         {
             Console.WriteLine(Usage);
             return args.Contains("--help") ? 0 : 1;
         }
-        return args[0] == "wikidata" ? await WikidataAsync(args) : await WfoAsync(args);
+        return args[0] switch
+        {
+            "wikidata" => await WikidataAsync(args),
+            "usda" => await UsdaAsync(args),
+            _ => await WfoAsync(args)
+        };
+    }
+
+    private static async Task<int> UsdaAsync(string[] args)
+    {
+        try
+        {
+            var hasMode = args.Length > 1 && !args[1].StartsWith("--");
+            var mode = hasMode ? args[1] : "import";
+            if (mode is not ("import" or "link" or "verify")) throw new InvalidDataException($"Unknown USDA command: {mode}");
+            string? directory = null, diagnosticPath = null, symbols = null;
+            string version = "8", zenodoRecord = "18945513";
+            var (force, sample, seed) = (false, 20, 42);
+            for (var index = hasMode ? 2 : 1; index < args.Length; index++)
+            {
+                var option = args[index];
+                if (option == "--force" && mode == "import") { force = true; continue; }
+                var allowed = mode switch
+                {
+                    "import" => new[] { "--directory", "--version", "--zenodo-record", "--diagnostics" },
+                    "verify" => ["--sample", "--symbols", "--seed"],
+                    _ => []
+                };
+                if (!allowed.Contains(option) || index + 1 >= args.Length)
+                    throw new InvalidDataException($"Unknown or incomplete option: {option}");
+                var value = args[++index];
+                switch (option)
+                {
+                    case "--directory": directory = value; break;
+                    case "--version": version = value; break;
+                    case "--zenodo-record": zenodoRecord = value; break;
+                    case "--diagnostics": diagnosticPath = value; break;
+                    case "--symbols": symbols = value; break;
+                    case "--sample":
+                        sample = int.TryParse(value, out var size) && size >= 0 ? size : throw new InvalidDataException("--sample must be zero or a positive number.");
+                        break;
+                    case "--seed":
+                        seed = int.TryParse(value, out var number) ? number : throw new InvalidDataException("--seed must be a whole number.");
+                        break;
+                }
+            }
+            var root = WfoSource.FindRepositoryRoot();
+            var settings = LoadSettings(root);
+            var connection = ConnectionString(settings);
+            using var cancellation = new CancellationTokenSource();
+            Console.CancelKeyPress += (_, e) => { e.Cancel = true; cancellation.Cancel(); };
+            if (mode == "link")
+            {
+                await UsdaLinker.RunAsync(connection, Console.Out, cancellation.Token);
+                return 0;
+            }
+            if (mode == "verify")
+            {
+                using var client = new UsdaPlantsClients(UsdaPlantsOptions.FromConfiguration(settings));
+                var verification = await new UsdaVerifier(connection, client.Plants, Console.Out).VerifyAsync(
+                    new UsdaVerifyOptions(sample, seed, symbols?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)),
+                    cancellation.Token);
+                return verification.Passed ? 0 : 2;
+            }
+            var archive = UsdaArchive.Discover(Path.GetFullPath(directory ?? Path.Combine(root, "data", "imports", "usda")));
+            diagnosticPath ??= Path.Combine(archive, $"usda-import-{DateTime.UtcNow:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}.jsonl");
+            await using var diagnosticWriter = new StreamWriter(new FileStream(diagnosticPath, FileMode.CreateNew, FileAccess.Write, FileShare.Read));
+            Console.WriteLine($"Diagnostics: {Path.GetFullPath(diagnosticPath)}");
+            await new UsdaImporter(connection, UsdaSeeds.DefaultDirectory(root), Console.Out).ImportAsync(archive,
+                new UsdaImportOptions(force, version, zenodoRecord), diagnosticWriter, cancellation.Token);
+            return 0;
+        }
+        catch (Exception exception)
+        {
+            // Never print connection strings, request URLs, or response bodies.
+            Console.Error.WriteLine(exception is InvalidOperationException or InvalidDataException or FileNotFoundException
+                ? exception.Message : $"Import failed ({exception.GetType().Name}). Check configuration and diagnostic output.");
+            return 1;
+        }
     }
 
     private static async Task<int> WikidataAsync(string[] args)
@@ -140,6 +221,9 @@ internal static class Program
             // Backbone and deduplication changes move current and accepted taxa under existing Wikidata links.
             Console.WriteLine("Re-resolving Wikidata links against the WFO backbone…");
             await WikidataLinkResolver.RunAsync(connection, Console.Out, cancellation.Token);
+            // USDA symbols link through those Wikidata links or by name, so they follow the backbone too.
+            Console.WriteLine("Relinking USDA symbols to WFO taxa…");
+            await UsdaLinker.RunAsync(connection, Console.Out, cancellation.Token);
             return 0;
         }
         catch (Exception exception)

@@ -76,8 +76,9 @@ public sealed class WikidataRetryException(TimeSpan? retryAfter, string reason) 
 }
 
 // One request in flight at a time, a minimum gap between requests, and bounded Retry-After handling.
+// Also used for USDA's PLANTS services; service names the source in error messages.
 public sealed class WikidataHttp(HttpClient http, WikidataOptions options, TimeSpan minimumInterval, TimeSpan requestTimeout,
-    Func<TimeSpan, CancellationToken, Task>? delay = null, TimeProvider? time = null)
+    Func<TimeSpan, CancellationToken, Task>? delay = null, TimeProvider? time = null, string service = "Wikidata")
 {
     private readonly Func<TimeSpan, CancellationToken, Task> delay = delay ?? Task.Delay;
     private readonly TimeProvider time = time ?? TimeProvider.System;
@@ -107,11 +108,11 @@ public sealed class WikidataHttp(HttpClient http, WikidataOptions options, TimeS
                         {
                             if (attempt >= options.MaximumRetries)
                                 throw new WikidataHttpException(response.StatusCode,
-                                    $"Wikidata returned HTTP {(int)response.StatusCode} after {options.MaximumRetries} retries.");
+                                    $"{service} returned HTTP {(int)response.StatusCode} after {options.MaximumRetries} retries.");
                             wait = RetryAfter(response) ?? options.DefaultRetryAfter;
                         }
                         else if (!response.IsSuccessStatusCode)
-                            throw new WikidataHttpException(response.StatusCode, $"Wikidata returned HTTP {(int)response.StatusCode}.");
+                            throw new WikidataHttpException(response.StatusCode, $"{service} returned HTTP {(int)response.StatusCode}.");
                         else
                         {
                             try { return await readResponse(response, timeout.Token); }
@@ -127,11 +128,11 @@ public sealed class WikidataHttp(HttpClient http, WikidataOptions options, TimeS
                     }
                     catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested && timeout.IsCancellationRequested)
                     {
-                        throw new WikidataHttpException(null, "Wikidata request timed out.", isTimeout: true, exception);
+                        throw new WikidataHttpException(null, $"{service} request timed out.", isTimeout: true, exception);
                     }
                     catch (HttpRequestException exception)
                     {
-                        throw new WikidataHttpException(null, $"Network error contacting Wikidata ({exception.HttpRequestError}).", inner: exception);
+                        throw new WikidataHttpException(null, $"Network error contacting {service} ({exception.HttpRequestError}).", inner: exception);
                     }
                 }
                 finally
