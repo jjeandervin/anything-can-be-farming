@@ -55,7 +55,9 @@ public sealed class ReferencePlantsController(AcbfDbContext db, IConfiguration c
 
     // One row per accepted taxon: synonyms report against their current accepted taxon, common names against the
     // link's accepted taxon, and taxa without one (Unchecked, dangling synonyms) as themselves. Each taxon keeps its
-    // best match: exact, prefix, word prefix, then substring. The trigram indexes serve the ILIKE/LIKE filters.
+    // best match: exact, prefix, word prefix, then substring. Within a tier, a match on the taxon's own name or common
+    // name beats a synonym match (the synonym "Hosta" must not outrank the genus Hosta). The trigram indexes serve
+    // the ILIKE/LIKE filters.
     private static readonly string SearchSql = $$"""
         WITH scientific AS (
             SELECT CASE WHEN t."TaxonomicStatus" = 'Synonym' AND a."Id" IS NOT NULL THEN a."Id" ELSE t."Id" END AS target_id,
@@ -88,9 +90,10 @@ public sealed class ReferencePlantsController(AcbfDbContext db, IConfiguration c
         ), page AS (
             SELECT t."Id", t."TaxonId", t."ScientificName", t."ScientificNameAuthorship", t."TaxonRank", t."TaxonomicStatus",
                 t."Family", t."Genus", b.tier, b.matched_on, b.matched_text,
-                t."TaxonomicStatus" IS DISTINCT FROM 'Accepted' AS not_accepted, {{RankDepthSql}} AS depth
+                b.matched_on = 'synonym' AS via_synonym, t."TaxonomicStatus" IS DISTINCT FROM 'Accepted' AS not_accepted,
+                {{RankDepthSql}} AS depth
             FROM best b JOIN reference.wfo_taxon t ON t."Id" = b.target_id AND t."IsCurrent"
-            ORDER BY b.tier, not_accepted, depth, t."ScientificName" COLLATE "C", t."TaxonId" COLLATE "C"
+            ORDER BY b.tier, via_synonym, not_accepted, depth, t."ScientificName" COLLATE "C", t."TaxonId" COLLATE "C"
             LIMIT @size
         )
         SELECT p."TaxonId", p."ScientificName", p."ScientificNameAuthorship", p."TaxonRank", p."TaxonomicStatus",
@@ -105,7 +108,7 @@ public sealed class ReferencePlantsController(AcbfDbContext db, IConfiguration c
                 length(n."Name"), n."Name" COLLATE "C"
             LIMIT 1
         ) c ON true
-        ORDER BY p.tier, p.not_accepted, p.depth, p."ScientificName" COLLATE "C", p."TaxonId" COLLATE "C"
+        ORDER BY p.tier, p.via_synonym, p.not_accepted, p.depth, p."ScientificName" COLLATE "C", p."TaxonId" COLLATE "C"
         """;
 
     // Wikidata and WFO strings are untrusted source text; clients must render them as text, never HTML.

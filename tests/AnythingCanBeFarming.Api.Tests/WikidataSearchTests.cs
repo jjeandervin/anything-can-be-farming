@@ -37,7 +37,9 @@ public sealed class WikidataSearchTests
         Assert.Equal("scientificName", acer[1].GetProperty("matchedOn").GetString());
 
         var hosta = await SearchAsync(client, "hosta");
-        Assert.Equal(["Hosta", "Hosta plantaginea"], hosta.Select(Name));
+        // Both exact genus matches: the genus's own name beats the synonym that leads to Cornutia.
+        Assert.Equal(["Hosta", "Cornutia", "Hosta plantaginea"], hosta.Select(Name));
+        Assert.Equal(("Cornutia", "synonym", "Hosta", null), Summary(hosta[1]));
         Assert.Equal("hosta", hosta[0].GetProperty("commonName").GetString());
 
         var maple = await SearchAsync(client, "maple");
@@ -99,7 +101,10 @@ public sealed class WikidataSearchTests
             WikidataPostgresTests.Taxon("wfo-0000000006", "Rudbeckia hirta"),
             WikidataPostgresTests.Taxon("wfo-0000000007", "Hosta", rank: "genus"),
             WikidataPostgresTests.Taxon("wfo-0000000008", "Hosta plantaginea"),
-            WikidataPostgresTests.Taxon("wfo-0000000009", "Mystery plant", "Unchecked"));
+            WikidataPostgresTests.Taxon("wfo-0000000009", "Mystery plant", "Unchecked"),
+            // As in WFO, "Hosta" is also a synonym genus name that points to another accepted genus.
+            WikidataPostgresTests.Taxon("wfo-0000000010", "Cornutia", rank: "genus"),
+            WikidataPostgresTests.Taxon("wfo-0000000011", "Hosta", "Synonym", "wfo-0000000010", rank: "genus"));
         var fake = new FakeWikidata();
         void Item(string qid, string wfo, params (string Name, string Language)[] names)
         {
