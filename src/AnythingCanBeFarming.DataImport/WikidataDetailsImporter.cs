@@ -280,6 +280,10 @@ public sealed class WikidataDetailsImporter(string connectionString, WikidataApi
 
     private static async Task SummarizeAsync(SourceImportSession session, DetailsReport report, CancellationToken cancellationToken)
     {
+        // A first run loads hundreds of thousands of names; refresh planner statistics so search uses the trigram index.
+        await session.ExecuteAsync("""
+            ANALYZE reference.wikidata_item; ANALYZE reference.wikidata_common_name; ANALYZE reference.wikidata_external_id;
+            """, cancellationToken);
         var totals = await session.ScalarsAsync("""
             SELECT count(*), count("DetailsFetchedAt"), count("EnwikiTitle"), count("ImageFile"),
                 (SELECT count(DISTINCT cn."ItemId") FROM reference.wikidata_common_name cn

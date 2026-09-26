@@ -227,7 +227,7 @@ dotnet build AnythingCanBeFarming.sln
 dotnet test tests/AnythingCanBeFarming.Api.Tests
 ```
 
-API tests exercise the actual JWT bearer handler with locally signed test tokens, including rejection of bad issuer, audience, signature, expiry, and malformed tokens. They also check CORS, anonymous/protected endpoints, health failure responses, and the reference-only EF model. WFO tests cover TSV parsing and optionally real PostgreSQL imports and queries (see below). The remote Keycloak installation is not used or modified by tests. Identify endpoint tests cover validation, magic-byte sniffing, the request sent to a stubbed Pl@ntNet transport, response mapping, and error mapping; a drift test keeps the organ enum in step with the client. Frontend tests cover session restoration settings, token renewal, sign-in/out, restricting token attachment to the API, routing, the status page, image preparation, and the Identify page.
+API tests exercise the actual JWT bearer handler with locally signed test tokens, including rejection of bad issuer, audience, signature, expiry, and malformed tokens. They also check CORS, anonymous/protected endpoints, health failure responses, and the reference-only EF model. WFO and Wikidata tests cover parsing, stubbed Wikidata HTTP (no test contacts Wikidata), and optionally real PostgreSQL imports, resolution, and search (see below). The remote Keycloak installation is not used or modified by tests. Identify endpoint tests cover validation, magic-byte sniffing, the request sent to a stubbed Pl@ntNet transport, response mapping, and error mapping; a drift test keeps the organ enum in step with the client. Frontend tests cover session restoration settings, token renewal, sign-in/out, restricting token attachment to the API, routing, the status page, image preparation, and the Identify page.
 
 With AppHost running:
 
@@ -248,7 +248,7 @@ Complete the interactive checks:
 5. Edit the subtitle in `apps/web/src/app/status/status-page.html`; confirm an Angular rebuild and browser update without restarting the AppHost.
 6. Hit the C# breakpoint described above while debugging the AppHost.
 
-`AcbfDbContext` is shared by the API and importer through `AnythingCanBeFarming.Data`. It contains only WFO reference entities. Startup and health checks do not call `EnsureCreated`, `Migrate`, or import reference data. Apply migrations explicitly before using reference endpoints; an empty migrated database returns empty search results, zero statistics, and 404 for unknown taxa.
+`AcbfDbContext` is shared by the API and importer through `AnythingCanBeFarming.Data`. It contains only reference entities (WFO, Wikidata, and the source-neutral `source_import` history). Startup and health checks do not call `EnsureCreated`, `Migrate`, or import reference data. Apply migrations explicitly before using reference endpoints; an empty migrated database returns empty search results, zero statistics, and 404 for unknown taxa.
 
 ## WFO reference data
 
@@ -289,7 +289,7 @@ Reference endpoints use the existing JWT bearer authentication:
 
 | Endpoint | Behavior |
 | --- | --- |
-| `GET /api/reference/plants/search?q=acer&pageSize=20` | Case-insensitive literal substring search across scientific name, genus, and specific epithet; current records only; stable name/ID ordering |
+| `GET /api/reference/plants/search?q=acer&pageSize=20` | Ranked search by scientific name, genus, and English common name; one row per accepted taxon (see [Wikidata enrichment](#wikidata-enrichment)) |
 | `GET /api/reference/plants/{taxonId}` | Resolves explicit replacement chains and returns `{ requestedWfoId, resolvedWfoId, wasRedirected, taxon }`; 404 if no current target exists |
 | `GET /api/reference/plants/by-ipni/{ipniId}` | Normalizes a bare or IPNI LSID identifier, resolves its WFO mappings, and returns the same resolution envelope; 409 for multiple current targets |
 | `GET /api/reference/plants/stats` | Total retained and current counts, current families/genera and distributions, relationship counts, and latest successful backbone import |
@@ -320,9 +320,49 @@ CsvHelper streams quoted, comma-containing, multiline, and Unicode fields throug
 
 Canonical resolution follows prescribed replacement edges before returning a current backbone record, including when the old ID remains in that backbone. It allows up to 64 replacements, detects visited IDs/self references, and never follows taxonomy synonyms implicitly. Invalid graphs reject the deduplication import; the API also returns 409 if an invalid graph is introduced outside the importer. The report counts mappings reaching cycles (including upstream mappings), rather than claiming a count of distinct cycle components. A deprecated-name record alone does not imply a replacement. Missing/non-current terminal targets return 404. Multiple IPNI mappings converging on one current taxon return that taxon; distinct current targets return 409 with candidate WFO IDs.
 
-The detail endpoint now returns the resolution envelope shown above instead of the previous flat response. The nested taxon retains source fields and one-level related taxa, but omits import IDs and internal relationship IDs. Search continues to query current backbone taxa only. Supplemental records are not added as separate search results.
+The detail endpoint now returns the resolution envelope shown above instead of the previous flat response. The nested taxon retains source fields and one-level related taxa, but omits import IDs and internal relationship IDs. Search queries current backbone taxa and Wikidata common names; supplemental records are not added as separate search results.
 
 See [supplemental validation](docs/wfo-supplemental-validation.md) for the staged-file counts and checks.
+
+## Wikidata enrichment
+
+Wikidata is the first enrichment source. It links WFO taxa to Wikidata items through the WFO ID property (P7715) and stores English and other-language common names (P1843), the English Wikipedia article title, the first image's Commons file name (P18), and other sources' IDs: GBIF (P846), IPNI (P961), USDA PLANTS (P1772), and POWO (P5037). Apply the migrations and import the WFO backbone first, then run:
+
+```sh
+dotnet run --project src/AnythingCanBeFarming.DataImport -- wikidata crosswalk [--allow-shrink]
+dotnet run --project src/AnythingCanBeFarming.DataImport -- wikidata details [--full] [--limit N]
+dotnet run --project src/AnythingCanBeFarming.DataImport -- wikidata all [--allow-shrink] [--full] [--limit N]   # crosswalk, then details
+dotnet run --project src/AnythingCanBeFarming.DataImport -- wikidata resolve
+```
+
+It uses the same `ConnectionStrings:acbf` lookup as the WFO importer. Every run records a `reference.source_import` row (source `Wikidata`, kind `Crosswalk` or `Details`) with its CLI options, counts, validation JSON, and a sanitized error message; runs for one source serialize on an advisory lock, and a `Running` row left by a killed process becomes `Abandoned` on the next run.
+
+- **Crosswalk** queries the Wikidata Query Service for every non-deprecated P7715 statement, in 11 partitions by the WFO ID's last character (0–9, plus IDs not ending in a digit). A partition that times out or errors is split into ten two-character partitions, each tried at most twice. It publishes in one transaction: items and links seen are upserted, links and items no longer seen become `IsCurrent = false` (nothing is deleted), and every current link is resolved against WFO. An empty result, or one with fewer than half the current links, fails publication as a likely outage; `--allow-shrink` overrides the 50% check. It takes about 5 minutes.
+- **Details** calls `wbgetentities` in batches of 50. By default it first asks for `lastrevid` only and refetches items that were never fetched, changed, or were redirected; `--full` refetches everything and `--limit N` stops after N items. It commits every 500 items, so an interrupted run resumes where it stopped. **The first full run takes about 4 hours** (about 920,000 items), and a routine incremental run still takes about 2½ hours because it checks every revision; both can be stopped and rerun safely. Each fetched item's common names and external IDs are replaced with exactly the fetched set. Missing (deleted) items are reported and keep their stored details; a redirected item's details are stored under the target QID and the old item is retired. P7715 values in the entity are compared with the crosswalk and mismatches reported; the crosswalk stays authoritative for links.
+- **Resolution** follows WFO deduplication replacements to a current taxon, then sets the accepted taxon: the taxon itself if `Accepted`, its current accepted taxon if a `Synonym`, otherwise null. Malformed WFO IDs get `NotFound` and a warning. Links are never inferred from names. Resolution also runs automatically at the end of every `wfo` import command, because backbone and deduplication refreshes change current taxa; `wikidata resolve` runs it on its own.
+
+Before each phase, the importer checks that every property it reads still has the expected datatype and fails fast if one changed. Raw values are stored exactly as Wikidata states them; `NormalizedName` sits alongside the raw common name (NFKD, combining marks removed, invariant lowercase, curly quotes folded, whitespace collapsed), and PostgreSQL generates `CompactName` from it with spaces and hyphens removed. Rerunning with no upstream change writes no rows.
+
+**Good citizenship.** Every request sends `User-Agent: AnythingCanBeFarming/<version> (https://github.com/jjeandervin/anything-can-be-farming)`; override it with `Wikidata:UserAgent`. SPARQL requests are at least 2 seconds apart and Action API requests at least 200 ms apart, one at a time, with `maxlag=5`. HTTP 429 and 503 (and `maxlag` errors) are retried up to 5 times, honoring `Retry-After` (default 10 seconds); other 4xx responses are not retried. Ctrl+C cancels cleanly. `Wikidata:SparqlBaseAddress` and `Wikidata:ApiBaseAddress` exist for testing against a stub.
+
+**Licensing.** Wikidata data is CC0, so no attribution is legally required. Every row still records its source (`source_import`, `DetailsImportId`, `CrosswalkImportId`) so the app can credit Wikidata. All Wikidata strings are untrusted source text and must never be rendered as HTML.
+
+**Search contract (breaking change).** `GET /api/reference/plants/search`:
+
+- `q` must be 2–200 characters after trimming, otherwise 400. Two-character queries cannot use the trigram indexes and take a few seconds on the full snapshot.
+- It matches current scientific names and genera (ILIKE, backed by trigram indexes) and English common names (`en` and `en-*`), comparing normalized names with the normalized query. Specific epithets are no longer matched on their own.
+- Common names also match with spaces and hyphens ignored, so `black-eyed susan` finds Wikidata's "blackeyed Susan". This goes beyond the original spec, which kept hyphens.
+- It returns one row per accepted taxon. A synonym match is reported against its accepted taxon, and a common name against its link's accepted taxon; taxa without one (for example `Unchecked`) appear as themselves.
+- Ranking: exact; then an exact match with spaces and hyphens ignored; then prefix; then word prefix (start of any word, after a space or hyphen); then substring; then any other space- and hyphen-insensitive match. Within a tier, a match on the taxon's own name or common name beats a synonym match. Remaining ties go to `Accepted` status, then to higher ranks (genus before species before infraspecific), then ordinal scientific name, then `TaxonId`.
+- Each result adds `commonName` (the best English name: `en` over `en-*`, then a name that matched the query, then the shortest, then ordinal order), `matchedOn` (`scientificName`, `synonym`, or `commonName`), and `matchedText`.
+
+```jsonc
+{ "taxonId": "wfo-0000514950", "scientificName": "Acer palmatum", "scientificNameAuthorship": "Thunb.",
+  "taxonRank": "species", "taxonomicStatus": "Accepted", "family": "Sapindaceae", "genus": "Acer",
+  "commonName": "Japanese maple", "matchedOn": "commonName", "matchedText": "Japanese maple" }
+```
+
+See [Wikidata validation](docs/wikidata-validation.md) for observed counts, coverage, and search timings.
 
 ## Stop, restart, and reset
 
