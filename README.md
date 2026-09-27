@@ -227,7 +227,7 @@ dotnet build AnythingCanBeFarming.sln
 dotnet test tests/AnythingCanBeFarming.Api.Tests
 ```
 
-API tests exercise the actual JWT bearer handler with locally signed test tokens, including rejection of bad issuer, audience, signature, expiry, and malformed tokens. They also check CORS, anonymous/protected endpoints, health failure responses, and the reference-only EF model. WFO and Wikidata tests cover parsing, stubbed Wikidata HTTP (no test contacts Wikidata), and optionally real PostgreSQL imports, resolution, and search (see below). The remote Keycloak installation is not used or modified by tests. Identify endpoint tests cover validation, magic-byte sniffing, the request sent to a stubbed Pl@ntNet transport, response mapping, and error mapping; a drift test keeps the organ enum in step with the client. Frontend tests cover session restoration settings, token renewal, sign-in/out, restricting token attachment to the API, routing, the status page, image preparation, and the Identify page.
+API tests exercise the actual JWT bearer handler with locally signed test tokens, including rejection of bad issuer, audience, signature, expiry, and malformed tokens. They also check CORS, anonymous/protected endpoints, health failure responses, and the reference-only EF model. WFO, Wikidata, and Wikipedia tests cover parsing (Wikipedia against saved live responses), stubbed Wikidata and Wikipedia HTTP (no test contacts either), and optionally real PostgreSQL imports, resolution, and search (see below). The remote Keycloak installation is not used or modified by tests. Identify endpoint tests cover validation, magic-byte sniffing, the request sent to a stubbed Pl@ntNet transport, response mapping, and error mapping; a drift test keeps the organ enum in step with the client. Frontend tests cover session restoration settings, token renewal, sign-in/out, restricting token attachment to the API, routing, the status page, image preparation, and the Identify page.
 
 With AppHost running:
 
@@ -248,7 +248,7 @@ Complete the interactive checks:
 5. Edit the subtitle in `apps/web/src/app/status/status-page.html`; confirm an Angular rebuild and browser update without restarting the AppHost.
 6. Hit the C# breakpoint described above while debugging the AppHost.
 
-`AcbfDbContext` is shared by the API and importer through `AnythingCanBeFarming.Data`. It contains only reference entities (WFO, Wikidata, and the source-neutral `source_import` history). Startup and health checks do not call `EnsureCreated`, `Migrate`, or import reference data. Apply migrations explicitly before using reference endpoints; an empty migrated database returns empty search results, zero statistics, and 404 for unknown taxa.
+`AcbfDbContext` is shared by the API and importer through `AnythingCanBeFarming.Data`. It contains only reference entities (WFO, Wikidata, USDA PLANTS, Wikipedia, and the source-neutral `source_import` history). Startup and health checks do not call `EnsureCreated`, `Migrate`, or import reference data. Apply migrations explicitly before using reference endpoints; an empty migrated database returns empty search results, zero statistics, and 404 for unknown taxa.
 
 ## WFO reference data
 
@@ -403,6 +403,46 @@ To change a label, edit its row, cite what you checked in `evidence` (e.g. `usda
 - **Ohio-native caveat:** USDA gives state *presence* plus native status for regions (Lower 48, Alaska, Hawaii, Canada, …), not per-state native status. "Present in Ohio and native to the contiguous US" does not mean native to Ohio.
 - GeoNames 614540 in `Present` is the country of Georgia, standing in for the US state. The row's remark says "Georgia".
 - Measurement and occurrence IDs are positional and are never used as durable keys.
+
+## Wikipedia descriptions
+
+English Wikipedia is the first description source. For every current Wikidata item with an English Wikipedia sitelink (about 90,000), the importer stages the article's **lead section as plain text** and Wikipedia's **short description**, with the metadata needed to attribute, license, refresh, and trace them. This is staging only: choosing which description a plant shows belongs to the catalog. Import Wikidata details first (they supply the sitelinks), then run:
+
+```sh
+dotnet run --project src/AnythingCanBeFarming.DataImport -- wikipedia leads [--full] [--limit N]
+dotnet run --project src/AnythingCanBeFarming.DataImport -- wikidata all --with-wikipedia [--allow-shrink] [--full] [--limit N]
+```
+
+`--with-wikipedia` runs the leads import as the last step of `wikidata all`, with the same `--full` and `--limit`; it is off by default. Every run records a `reference.source_import` row (source `Wikipedia`, kind `Leads`) with its options, counts, the validation report below, and a sanitized error message. Runs serialize on the source's advisory lock, like Wikidata.
+
+- **Selection.** Articles are chosen only by `wikidata_item.EnwikiTitle` on current items; Wikipedia is never searched by name. Each distinct title is one `reference.wikipedia_article` row (unique on `Wiki`, `RequestedTitle`), and `reference.wikipedia_item_article` mirrors which current items carry it. A title no longer carried by any current item becomes `IsCurrent = false`; articles are never deleted. New titles start as `Pending` until checked.
+- **Revision check.** Titles go to the Action API in batches of 50 (`prop=info|pageprops`, `redirects=1`). Every result is mapped back to its requested title through the response's `normalized` and `redirects` arrays, never by position. Page ID, title, Wikidata item, short description, and the disambiguation flag are refreshed for every article on every run.
+- **Lead fetch.** A lead is fetched (TextExtracts, `exintro`, plain text, batches of 20) only when it was never fetched, its `lastrevid` changed, or `--full` is given. `continue` is followed until the batch is complete. The extract is stored exactly as returned, with the `lastrevid` from the same response. `--limit N` stops after N articles.
+- **Publishing.** Each 500 articles commit together, so an interrupted run resumes through the revision check. Only changed rows are rewritten; a `--full` refetch of an identical revision keeps its original `FetchedAt`.
+- **Runtime.** The first full run takes about an hour (about 89,700 articles; one lead request per 20 articles). A routine incremental run takes about 10 minutes, because it only checks revisions (one request per 50 articles) and refetches the few that changed. Both can be stopped and rerun safely.
+
+Requests use the Wikidata User-Agent (override with `Wikipedia:UserAgent`, or `Wikidata:UserAgent` for both), one at a time, at least 200 ms apart, with `maxlag=5` and the same `Retry-After` handling. `Wikipedia:ApiBaseAddress` exists for testing against a stub.
+
+**Status.** Each article gets exactly one status, evaluated in this order:
+
+| Status | Meaning |
+| --- | --- |
+| `Missing` | The page does not exist (or the title cannot be requested). Any previously stored text and its attribution are kept. |
+| `Disambiguation` | The page is a disambiguation page. No lead is stored. |
+| `ItemMismatch` | The page's Wikidata item (`WikibaseItem`) is not the item that requested it. Typically the sitelink redirects to a broader article (a species to its genus, or a synonym to the accepted name), or a monotypic genus links to its species' article. The lead is stored for inspection, but **the catalog must not use it**. |
+| `EmptyLead` | The lead is empty or whitespace. |
+| `Ok` | Usable. If a redirect was followed to an article about the same item, `Title` holds the target. |
+| `Pending` | Selected but not yet checked (for example, beyond `--limit` or after an interrupted run). |
+
+A redirect never sets the status by itself: it is `Ok` when the target is about the same item and `ItemMismatch` otherwise. Each run reports how many redirects it followed and how many landed on a different item.
+
+**Licensing (CC BY-SA 4.0).** Wikipedia text is licensed under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/), and every row carries its attribution: `Url` (the article), `LastRevId` (the revision the text came from, which leads to its author history), `License` and `LicenseUrl`, and `FetchedAt` (retrieval time). Wherever the text appears:
+
+- Show attribution with it: credit Wikipedia, link to the article (`Url`), and name and link the license. For example: "From [Acer saccharum](https://en.wikipedia.org/wiki/Acer_saccharum) on Wikipedia, CC BY-SA 4.0."
+- Do not alter the stored text. `LeadText` stays exactly as retrieved; any cleanup belongs in separate derived columns (`LeadChars`, the length, is generated by PostgreSQL). Adapted text shared with others must itself be CC BY-SA 4.0 and say that it was changed.
+- Treat it as untrusted source text and never render it as HTML. A lead is whatever the article said at `LastRevId`, which can be a vandalized revision; guard it before publishing (see the validation doc).
+
+See [Wikipedia validation](docs/wikipedia-validation.md) for status counts, lead lengths, stub counts, and the garden check.
 
 ## Stop, restart, and reset
 

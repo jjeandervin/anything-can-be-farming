@@ -8,8 +8,9 @@ internal static class Program
         Usage: dotnet run --project src/AnythingCanBeFarming.DataImport -- wfo [backbone|supplemental|all] [--directory <package>] [--file <backbone TSV>] [--version <release>] [--force] [--diagnostics <backbone jsonl>]
                dotnet run --project src/AnythingCanBeFarming.DataImport -- wikidata crosswalk [--allow-shrink]
                dotnet run --project src/AnythingCanBeFarming.DataImport -- wikidata details [--full] [--limit N]
-               dotnet run --project src/AnythingCanBeFarming.DataImport -- wikidata all [--allow-shrink] [--full] [--limit N]
+               dotnet run --project src/AnythingCanBeFarming.DataImport -- wikidata all [--allow-shrink] [--full] [--limit N] [--with-wikipedia]
                dotnet run --project src/AnythingCanBeFarming.DataImport -- wikidata resolve
+               dotnet run --project src/AnythingCanBeFarming.DataImport -- wikipedia leads [--full] [--limit N]
                dotnet run --project src/AnythingCanBeFarming.DataImport -- usda [--directory <archive>] [--force] [--version 8] [--zenodo-record 18945513] [--diagnostics <jsonl>]
                dotnet run --project src/AnythingCanBeFarming.DataImport -- usda link
                dotnet run --project src/AnythingCanBeFarming.DataImport -- usda verify [--sample 20] [--symbols ACSA3,COFL2,...] [--seed 42]
@@ -17,7 +18,7 @@ internal static class Program
 
     public static async Task<int> Main(string[] args)
     {
-        if (args.Length == 0 || args[0] is not ("wfo" or "wikidata" or "usda") || args.Contains("--help"))
+        if (args.Length == 0 || args[0] is not ("wfo" or "wikidata" or "wikipedia" or "usda") || args.Contains("--help"))
         {
             Console.WriteLine(Usage);
             return args.Contains("--help") ? 0 : 1;
@@ -25,6 +26,7 @@ internal static class Program
         return args[0] switch
         {
             "wikidata" => await WikidataAsync(args),
+            "wikipedia" => await WikipediaAsync(args),
             "usda" => await UsdaAsync(args),
             _ => await WfoAsync(args)
         };
@@ -109,13 +111,14 @@ internal static class Program
         {
             var mode = args.Length > 1 ? args[1] : throw new InvalidDataException("Specify a Wikidata command: crosswalk, details, all, or resolve.");
             if (mode is not ("crosswalk" or "details" or "all" or "resolve")) throw new InvalidDataException($"Unknown Wikidata command: {mode}");
-            var (allowShrink, full) = (false, false);
+            var (allowShrink, full, withWikipedia) = (false, false, false);
             int? limit = null;
             for (var index = 2; index < args.Length; index++)
             {
                 var option = args[index];
                 if (option == "--allow-shrink" && mode is ("crosswalk" or "all")) allowShrink = true;
                 else if (option == "--full" && mode is ("details" or "all")) full = true;
+                else if (option == "--with-wikipedia" && mode == "all") withWikipedia = true;
                 else if (option == "--limit" && mode is ("details" or "all") && index + 1 < args.Length)
                     limit = int.TryParse(args[++index], out var value) && value > 0 ? value
                         : throw new InvalidDataException("--limit must be a positive number.");
@@ -139,6 +142,49 @@ internal static class Program
                     .ImportAsync(allowShrink, cancellation.Token);
             if (mode is "details" or "all")
                 await new WikidataDetailsImporter(connection, clients.Api, Console.Out).ImportAsync(full, limit, cancellation.Token);
+            if (withWikipedia)
+            {
+                // Last step, off by default: leads follow the sitelinks the details phase just refreshed.
+                using var wikipedia = new WikipediaClients(WikipediaOptions.FromConfiguration(settings));
+                await new WikipediaLeadsImporter(connection, wikipedia.Api, Console.Out).ImportAsync(full, limit, cancellation.Token);
+            }
+            return 0;
+        }
+        catch (Exception exception)
+        {
+            // Never print connection strings, request URLs, or response bodies.
+            Console.Error.WriteLine(exception is InvalidOperationException or InvalidDataException
+                ? exception.Message : $"Import failed ({exception.GetType().Name}). Check configuration and output.");
+            return 1;
+        }
+    }
+
+    private static async Task<int> WikipediaAsync(string[] args)
+    {
+        try
+        {
+            var mode = args.Length > 1 ? args[1] : throw new InvalidDataException("Specify a Wikipedia command: leads.");
+            if (mode != "leads") throw new InvalidDataException($"Unknown Wikipedia command: {mode}");
+            var full = false;
+            int? limit = null;
+            for (var index = 2; index < args.Length; index++)
+            {
+                var option = args[index];
+                if (option == "--full") full = true;
+                else if (option == "--limit" && index + 1 < args.Length)
+                    limit = int.TryParse(args[++index], out var value) && value > 0 ? value
+                        : throw new InvalidDataException("--limit must be a positive number.");
+                else throw new InvalidDataException($"Unknown or incomplete option: {option}");
+            }
+            string? root = null;
+            try { root = WfoSource.FindRepositoryRoot(); }
+            catch (InvalidOperationException) { }
+            var settings = LoadSettings(root);
+            var connection = ConnectionString(settings);
+            using var cancellation = new CancellationTokenSource();
+            Console.CancelKeyPress += (_, e) => { e.Cancel = true; cancellation.Cancel(); };
+            using var clients = new WikipediaClients(WikipediaOptions.FromConfiguration(settings));
+            await new WikipediaLeadsImporter(connection, clients.Api, Console.Out).ImportAsync(full, limit, cancellation.Token);
             return 0;
         }
         catch (Exception exception)

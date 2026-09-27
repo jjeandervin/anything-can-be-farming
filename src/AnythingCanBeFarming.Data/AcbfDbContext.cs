@@ -14,6 +14,8 @@ public sealed class AcbfDbContext(DbContextOptions<AcbfDbContext> options) : DbC
     public DbSet<WikidataWfoLink> WikidataWfoLinks => Set<WikidataWfoLink>();
     public DbSet<WikidataExternalId> WikidataExternalIds => Set<WikidataExternalId>();
     public DbSet<WikidataCommonName> WikidataCommonNames => Set<WikidataCommonName>();
+    public DbSet<WikipediaArticle> WikipediaArticles => Set<WikipediaArticle>();
+    public DbSet<WikipediaItemArticle> WikipediaItemArticles => Set<WikipediaItemArticle>();
     public DbSet<UsdaTaxon> UsdaTaxa => Set<UsdaTaxon>();
     public DbSet<UsdaFact> UsdaFacts => Set<UsdaFact>();
     public DbSet<UsdaRemark> UsdaRemarks => Set<UsdaRemark>();
@@ -129,6 +131,22 @@ public sealed class AcbfDbContext(DbContextOptions<AcbfDbContext> options) : DbC
         commonNames.HasIndex(x => x.NormalizedName, "IX_wikidata_common_name_NormalizedName_trgm")
             .HasMethod("gin").HasOperators("gin_trgm_ops");
         commonNames.HasOne<WikidataItem>().WithMany().HasForeignKey(x => x.ItemId).OnDelete(DeleteBehavior.Restrict);
+
+        var articles = modelBuilder.Entity<WikipediaArticle>();
+        articles.ToTable("wikipedia_article", "reference");
+        articles.Property(x => x.Id).UseIdentityByDefaultColumn();
+        articles.HasIndex(x => new { x.Wiki, x.RequestedTitle }).IsUnique();
+        articles.HasIndex(x => x.WikibaseItem);
+        articles.HasIndex(x => x.Status);
+        articles.Property(x => x.LeadChars).HasComputedColumnSql("""char_length("LeadText")""", stored: true);
+        articles.HasOne<SourceImport>().WithMany().HasForeignKey(x => x.ImportId).OnDelete(DeleteBehavior.Restrict);
+
+        var itemArticles = modelBuilder.Entity<WikipediaItemArticle>();
+        itemArticles.ToTable("wikipedia_item_article", "reference");
+        itemArticles.HasKey(x => new { x.ItemId, x.ArticleId });
+        itemArticles.HasIndex(x => x.ArticleId);
+        itemArticles.HasOne<WikidataItem>().WithMany().HasForeignKey(x => x.ItemId).OnDelete(DeleteBehavior.Restrict);
+        itemArticles.HasOne<WikipediaArticle>().WithMany().HasForeignKey(x => x.ArticleId).OnDelete(DeleteBehavior.Restrict);
 
         var usdaTaxa = modelBuilder.Entity<UsdaTaxon>();
         usdaTaxa.ToTable("usda_taxon", "reference");

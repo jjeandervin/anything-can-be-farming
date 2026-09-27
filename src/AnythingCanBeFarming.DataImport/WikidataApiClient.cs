@@ -1,9 +1,8 @@
 using System.Text.Json;
-using System.Text.RegularExpressions;
 
 namespace AnythingCanBeFarming.DataImport;
 
-public sealed partial class WikidataApiClient(WikidataHttp http)
+public sealed class WikidataApiClient(WikidataHttp http)
 {
     public const string Path = "w/api.php";
 
@@ -53,25 +52,8 @@ public sealed partial class WikidataApiClient(WikidataHttp http)
         return WikidataEntityParser.Parse(document.RootElement, warnings);
     }
 
-    // Every Action API call goes through here so maxlag and API errors are handled consistently.
     private Task<JsonDocument> GetAsync(string query, CancellationToken cancellationToken) =>
-        http.SendAsync(() => new HttpRequestMessage(HttpMethod.Get, $"{Path}?{query}"), async (response, token) =>
-        {
-            await using var stream = await response.Content.ReadAsStreamAsync(token);
-            var document = await JsonDocument.ParseAsync(stream, cancellationToken: token);
-            if (!document.RootElement.TryGetProperty("error", out var error)) return document;
-            using (document)
-            {
-                var code = error.ValueKind == JsonValueKind.Object && error.TryGetProperty("code", out var value)
-                    && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
-                if (code == "maxlag") throw new WikidataRetryException(null, "Wikidata API reported maxlag");
-                throw new WikidataHttpException(null, $"Wikidata API error {Token(code) ?? "(no code)"}.");
-            }
-        }, cancellationToken);
+        MediaWikiActionApi.GetAsync(http, "Wikidata", Path, query, cancellationToken);
 
-    // Error codes and datatypes are untrusted; only echo short, plain tokens.
-    private static string? Token(string? value) => value != null && TokenPattern().IsMatch(value) ? value : value == null ? null : "(unrecognized)";
-
-    [GeneratedRegex(@"^[A-Za-z0-9_-]{1,64}\z", RegexOptions.CultureInvariant)]
-    private static partial Regex TokenPattern();
+    private static string? Token(string? value) => MediaWikiActionApi.Token(value);
 }

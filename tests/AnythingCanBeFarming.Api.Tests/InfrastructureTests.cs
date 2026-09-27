@@ -103,7 +103,8 @@ public sealed class InfrastructureTests
             {
                 typeof(PlaceLabel), typeof(SourceImport), typeof(UsdaCodeLabel), typeof(UsdaDistribution), typeof(UsdaFact),
                 typeof(UsdaRemark), typeof(UsdaTaxon), typeof(UsdaTraitType), typeof(UsdaWfoLink), typeof(WfoDeduplicatedId), typeof(WfoDeprecatedName), typeof(WfoImport), typeof(WfoIpniMapping),
-                typeof(WfoTaxon), typeof(WikidataCommonName), typeof(WikidataExternalId), typeof(WikidataItem), typeof(WikidataWfoLink)
+                typeof(WfoTaxon), typeof(WikidataCommonName), typeof(WikidataExternalId), typeof(WikidataItem), typeof(WikidataWfoLink),
+                typeof(WikipediaArticle), typeof(WikipediaItemArticle)
             },
             db.Model.GetEntityTypes().Select(x => x.ClrType).OrderBy(x => x.Name));
     }
